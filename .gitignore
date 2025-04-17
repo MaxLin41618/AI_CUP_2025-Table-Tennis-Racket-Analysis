@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# VSCode
+.vscode/
+.cursor
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Env
+.env
+.venv/
+env/
+venv/
+
+# Model checkpoints
+*.ckpt
+*.pth
+*.pt
+*.h5
+
+# Data
+data/
+
+models/
+catboost_info/
