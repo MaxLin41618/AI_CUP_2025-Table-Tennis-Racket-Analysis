@@ -29,5 +29,7 @@ venv/
 # Data
 data/
 
+outputs/
 models/
 catboost_info/
+AICUP.md
