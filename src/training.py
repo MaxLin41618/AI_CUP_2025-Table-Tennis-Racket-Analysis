@@ -64,10 +64,10 @@ def main():
             for fold, (train_idx, val_idx) in enumerate(sgkf.split(X, y_encoded, groups=groups)):
                 X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
                 y_train, y_val = y_encoded[train_idx], y_encoded[val_idx]
-                # TabPFN
+                # TabPFN: NOTE: 可以先用一般版快速推論看效果
                 if use_tabpfn:
-                    model = AutoTabPFNClassifier(max_time=config.PHE_TIME, device='cuda', categorical_feature_indices=[0], random_state=config.RANDOM_SEED)
-                    # model = TabPFNClassifier(categorical_features_indices=[0], random_state=config.RANDOM_SEED)
+                    # model = AutoTabPFNClassifier(max_time=config.PHE_TIME, device='cuda', categorical_feature_indices=[0], random_state=config.RANDOM_SEED)
+                    model = TabPFNClassifier(categorical_features_indices=[0], random_state=config.RANDOM_SEED)
                     model.fit(X_train[config.FEATURES].values, y_train)
                     y_pred = model.predict_proba(X_val[config.FEATURES].values)
                 # CatBoost

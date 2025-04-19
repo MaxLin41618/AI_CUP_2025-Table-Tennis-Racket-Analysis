@@ -6,6 +6,7 @@
 - 均值、標準差、方差、最大/最小值、中位數、四分位數、峰度、偏度、過零率、均方根、能量
 - 主頻、頻譜質心、頻譜熵、頻譜能量
 - 合加速度、合角速度及其所有統計特徵
+- 小波轉換近似係數的均值、標準差、能量
 最終產生 training.csv，供後續模型訓練使用。
 """
 
@@ -14,6 +15,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import kurtosis, skew, entropy
 from scipy.fft import rfft, rfftfreq
+import pywt  # 小波轉換
 
 # ========== 特徵計算工具 ==========
 def calc_time_features(x: np.ndarray, prefix: str) -> dict:
@@ -29,9 +31,7 @@ def calc_time_features(x: np.ndarray, prefix: str) -> dict:
     features[f'{prefix}_q75'] = np.percentile(x, 75)
     features[f'{prefix}_kurtosis'] = kurtosis(x)
     features[f'{prefix}_skew'] = skew(x)
-    # 均方根
     features[f'{prefix}_rms'] = np.sqrt(np.mean(np.square(x)))
-    # 能量
     features[f'{prefix}_energy'] = np.sum(np.square(x))
     return features
 
@@ -56,29 +56,50 @@ def calc_freq_features(x: np.ndarray, prefix: str, fs: float = 85.0) -> dict:
     features[f'{prefix}_spectral_energy'] = np.sum(np.square(mag))
     return features
 
-# 組合訊號
-def calc_composite_signal(arrays: list) -> np.ndarray:
-    """計算合加速度或合角速度"""
-    return np.sqrt(np.sum([a**2 for a in arrays], axis=0))
+# 小波轉換特徵
+# 取一階小波分解的 approximation coefficients (cA) 統計量
+# 只取mean, std, energy，避免特徵爆炸
+def calc_wavelet_features(x: np.ndarray, prefix: str, wavelet: str = 'db4') -> dict:
+    """
+    計算小波轉換特徵
+    Args:
+        x: 時序資料
+        prefix: 特徵前綴
+        wavelet: 小波基底（預設'db4'）
+    Returns:
+        dict: 小波特徵
+    """
+    features = {}
+    # 進行一階離散小波轉換，分解出 approximation (cA) 與 detail (cD) 係數
+    cA, cD = pywt.dwt(x, wavelet)  # cA: 近似(低頻)係數, cD: 細節(高頻)係數
+    # 只取cA(近似)的統計特徵，避免特徵爆炸
+    features[f'{prefix}_wavelet_mean'] = np.mean(cA)     # 近似係數均值
+    features[f'{prefix}_wavelet_std'] = np.std(cA)       # 近似係數標準差
+    features[f'{prefix}_wavelet_energy'] = np.sum(np.square(cA))  # 近似係數能量
+    return features
 
-# ========== 主處理流程 ==========
+# ========== 主特徵萃取流程 ==========
 def extract_features_from_txt(txt_path: str) -> dict:
-    """讀取單一 txt，計算所有特徵"""
+    """讀取單一檔案並萃取所有特徵（含小波特徵）"""
+    # 載入單一txt，預設空白分隔
     data = np.loadtxt(txt_path)
+    # 依序取得六軸感測資料
+    Ax, Ay, Az, Gx, Gy, Gz = data.T
     feature_dict = {}
-    channel_names = ['Ax', 'Ay', 'Az', 'Gx', 'Gy', 'Gz']
-    for i, ch in enumerate(channel_names):
-        x = data[:, i]
-        feature_dict.update(calc_time_features(x, ch))
-        feature_dict.update(calc_freq_features(x, ch))
-    # 合加速度
-    acc = calc_composite_signal([data[:, 0], data[:, 1], data[:, 2]])
+    # 各軸時域/頻域/小波特徵
+    for axis, arr in zip(['Ax','Ay','Az','Gx','Gy','Gz'], [Ax, Ay, Az, Gx, Gy, Gz]):
+        feature_dict.update(calc_time_features(arr, axis))         # 時域特徵
+        feature_dict.update(calc_freq_features(arr, axis))         # 頻域特徵
+        feature_dict.update(calc_wavelet_features(arr, axis))      # 小波特徵
+    # 合加速度/角速度（非原始感測器，為三軸組合）
+    acc = np.sqrt(Ax**2 + Ay**2 + Az**2)      # 合加速度
+    gyro = np.sqrt(Gx**2 + Gy**2 + Gz**2)     # 合角速度
     feature_dict.update(calc_time_features(acc, 'AccVec'))
     feature_dict.update(calc_freq_features(acc, 'AccVec'))
-    # 合角速度
-    gyro = calc_composite_signal([data[:, 3], data[:, 4], data[:, 5]])
+    feature_dict.update(calc_wavelet_features(acc, 'AccVec'))
     feature_dict.update(calc_time_features(gyro, 'GyroVec'))
     feature_dict.update(calc_freq_features(gyro, 'GyroVec'))
+    feature_dict.update(calc_wavelet_features(gyro, 'GyroVec'))
     return feature_dict
 
 if __name__ == '__main__':
