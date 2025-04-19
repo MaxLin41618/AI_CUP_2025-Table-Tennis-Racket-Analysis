@@ -33,3 +33,4 @@ outputs/
 models/
 catboost_info/
 AICUP.md
+experiment.md

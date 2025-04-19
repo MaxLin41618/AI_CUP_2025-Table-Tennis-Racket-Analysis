@@ -3,14 +3,17 @@ import pandas as pd
 from catboost import Pool, CatBoostClassifier
 from model import gender_model, handed_model, play_years_model, level_model
 import config
-from sklearn.model_selection import GroupKFold
+from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.metrics import roc_auc_score
 from datetime import datetime
 from sklearn.preprocessing import LabelEncoder
 import numpy as np
 import shutil
-from utils import print_and_log_overall_mean, compute_class_weights
+from utils import print_and_log_overall_mean, compute_class_weights, plot_feature_importance
 import copy
+from tabpfn import TabPFNClassifier
+from tabpfn_extensions.post_hoc_ensembles.sklearn_interface import AutoTabPFNClassifier
+import pickle
 
 # 隨機種子
 np.random.seed(config.RANDOM_SEED)
@@ -23,9 +26,11 @@ TARGETS = {
     'level': level_model
 }
 
+use_tabpfn = config.MODEL_TYPE.lower() == 'tabpfn'
+
 # ========== 主訓練流程 ==========
 def main():
-    """以GroupKFold訓練四個CatBoost模型，並記錄cv結果與平均值"""
+    """以StratifiedGroupKFold訓練四個CatBoost模型，並記錄cv結果與平均值"""
     # 載入資料
     df = pd.read_csv(config.TRAIN_CSV)
     X = df[config.FEATURES]
@@ -39,74 +44,83 @@ def main():
 
     # 紀錄log
     with open(log_path, 'w', encoding='utf-8-sig') as logf:
-        logf.write(f'GroupKFold: {config.K_FOLD}\n')
+        logf.write(f'StratifiedGroupKFold: {config.K_FOLD}\n')
         logf.write(f'Features: {config.FEATURES}\n')
         logf.write(f'Training file: {config.TRAIN_CSV}\n')
 
-        # GroupKFold分群交叉驗證
-        gkf = GroupKFold(n_splits=config.K_FOLD)
-        cv_scores_dict = {target: [] for target in TARGETS}
-        label_encoders = {}  # 標籤編碼器
         cat_features = ['mode']  # 類別特徵
-        for fold, (train_idx, val_idx) in enumerate(gkf.split(X, df[config.PLAYER_ID_COL], groups)):
-            print(f"\n========== 第{fold+1}折 ==========")
-            X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
-            for target, model in TARGETS.items():
-                y = df[target]
-                # ====== 標籤編碼，確保從0開始且連續 ======
-                le = LabelEncoder()
-                y_encoded = le.fit_transform(y)
-                label_encoders[target] = le
+        label_encoders = {}
+        cv_scores_dict = {}
+        for target, model in TARGETS.items():
+            print(f'\n====== {target} 任務交叉驗證 ======')
+            y = df[target]
+            le = LabelEncoder()
+            y_encoded = le.fit_transform(y)
+            n_classes = len(np.unique(y_encoded))  # 該任務總標籤數
+            label_encoders[target] = le
+            sgkf = StratifiedGroupKFold(n_splits=config.K_FOLD, shuffle=True, random_state=42)
+            cv_scores_dict[target] = []
+            
+            for fold, (train_idx, val_idx) in enumerate(sgkf.split(X, y_encoded, groups=groups)):
+                X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
                 y_train, y_val = y_encoded[train_idx], y_encoded[val_idx]
-                
-                # ======== 動態計算類別權重並設定到模型 ========
-                class_weights = compute_class_weights(y_encoded)
-                class_weights_rounded = [round(w, 4) for w in class_weights]
-                print(f"{target} Fold {fold+1} 類別權重: {class_weights_rounded}")
-                model = copy.deepcopy(TARGETS[target])
-                model.set_params(class_weights=class_weights)
-                # ======== 訓練模型 ========
-                train_pool = Pool(X_train, y_train, cat_features=cat_features)
-                val_pool = Pool(X_val, y_val, cat_features=cat_features)
-                model.fit(train_pool, eval_set=val_pool)
-                # 預測機率
-                y_pred = model.predict_proba(X_val)
-                if target in config.BINARY_TARGETS:
-                    val_classes = np.unique(y_val)
-                    if len(val_classes) < 2:
-                        print(f'{target} Fold {fold+1}: 驗證集類別不足，AUC=NaN')
-                        cv_scores_dict[target].append(np.nan)
-                    else:
-                        auc = roc_auc_score(y_val, y_pred[:,1])
-                        print(f'{target} Fold {fold+1}: AUC={auc:.4f}')
-                        cv_scores_dict[target].append(auc)
+                # TabPFN
+                if use_tabpfn:
+                    model = AutoTabPFNClassifier(max_time=config.PHE_TIME, device='cuda', categorical_feature_indices=[0], random_state=config.RANDOM_SEED)
+                    # model = TabPFNClassifier(categorical_features_indices=[0], random_state=config.RANDOM_SEED)
+                    model.fit(X_train[config.FEATURES].values, y_train)
+                    y_pred = model.predict_proba(X_val[config.FEATURES].values)
+                # CatBoost
                 else:
-                    n_class = len(le.classes_)
-                    val_classes = np.unique(y_val)
-                    if len(val_classes) < n_class:
-                        print(f'{target} Fold {fold+1}: 驗證集類別不足，AUC=NaN')                        
-                        cv_scores_dict[target].append(np.nan)
-                    else:
+                    class_weights = compute_class_weights(y_train)
+                    class_weights_rounded = [round(w, 4) for w in class_weights]
+                    print(f"{target} Fold {fold+1} 類別權重: {class_weights_rounded}")
+                    model = copy.deepcopy(TARGETS[target])
+                    model.set_params(class_weights=class_weights)
+                    train_pool = Pool(X_train, y_train, cat_features=cat_features)
+                    val_pool = Pool(X_val, y_val, cat_features=cat_features)
+                    model.fit(train_pool, eval_set=val_pool)
+                    y_pred = model.predict_proba(X_val)
+                # ======== 評分前標籤數檢查 ========
+                unique_labels = np.unique(y_val)
+                if len(unique_labels) < n_classes:
+                    print(f'{target} Fold {fold+1}: 標籤數不足（僅有{len(unique_labels)}類，需{n_classes}類），跳過評分')
+                    cv_scores_dict[target].append(np.nan)  # 跳過時填入nan，保持fold對應關係
+                    continue
+                # ======== 計算AUC ========
+                if target in config.BINARY_TARGETS:
+                    auc = roc_auc_score(y_val, y_pred[:,1])
+                    print(f'{target} Fold {fold+1}: AUC={auc:.4f}')
+                    cv_scores_dict[target].append(auc)
+                else:
+                    try:
                         auc = roc_auc_score(y_val, y_pred, multi_class='ovr', average='micro')
-                        print(f'{target} Fold {fold+1}: micro OvR AUC={auc:.4f}')                        
-                        cv_scores_dict[target].append(auc)
+                        print(f'{target} Fold {fold+1}: micro OvR AUC={auc:.4f}')
+                    except ValueError as e:
+                        print(f'{target} Fold {fold+1}: AUC 計算失敗，跳過，原因: {e}')
+                        auc = np.nan
+                    cv_scores_dict[target].append(auc)
                 # ======== 儲存模型與參數到分層資料夾 ========
                 target_dir = os.path.join(save_dir, target)
                 os.makedirs(target_dir, exist_ok=True)
                 fold_dir = os.path.join(target_dir, f'FOLD_{fold+1}')
                 os.makedirs(fold_dir, exist_ok=True)
-                model_path = os.path.join(fold_dir, 'model.cbm')
+                if use_tabpfn:
+                    model_path = os.path.join(fold_dir, 'model.tabpfn')
+                    with open(model_path, 'wb') as f:
+                        pickle.dump(model, f)
+                else:
+                    model_path = os.path.join(fold_dir, 'model.cbm')
+                    model.save_model(model_path)
                 param_path = os.path.join(fold_dir, 'params.txt')
-                model.save_model(model_path)
-                with open(param_path, 'w', encoding='utf-8') as pf:
-                    pf.write(str(model.get_params()))
-
-                # ======== 特徵重要度繪圖 ========
-                from utils import plot_feature_importance
-                try:
-                    plot_feature_importance(model, config.FEATURES, os.path.join(fold_dir, 'importance.png'), title=f'Feature Importance - {target} FOLD_{fold+1}', top_n=15)
-                except Exception as e:
-                    print(f"[特徵重要度繪圖失敗] {target} fold {fold+1}: {e}")
+                if not use_tabpfn:
+                    with open(param_path, 'w', encoding='utf-8') as pf:
+                        pf.write(str(model.get_params()))
+                if not use_tabpfn:
+                    try:
+                        plot_feature_importance(model, config.FEATURES, os.path.join(fold_dir, 'importance.png'), title=f'Feature Importance - {target} FOLD_{fold+1}', top_n=15)
+                    except Exception as e:
+                        print(f"[特徵重要度繪圖失敗] {target} fold {fold+1}: {e}")
         # 計算平均分數
         print(f"======結果======")
         for target in TARGETS:
@@ -114,13 +128,21 @@ def main():
             valid_scores = [s for s in scores if not np.isnan(s)]
             if valid_scores:
                 mean_score = np.nanmean(scores)
-                # 尋找最佳fold
-                best_idx = np.nanargmax(scores)
+                # 尋找有效fold的索引
+                valid_indices = [i for i, s in enumerate(scores) if not np.isnan(s)]
+                valid_scores_arr = np.array([scores[i] for i in valid_indices])
+                best_valid_idx_in_valid = np.nanargmax(valid_scores_arr)
+                best_idx = valid_indices[best_valid_idx_in_valid]
                 best_score = scores[best_idx]
                 # best模型存於target資料夾下
-                best_model_src = os.path.join(save_dir, target, f'FOLD_{best_idx+1}', 'model.cbm')
-                best_model_dst = os.path.join(save_dir, target, f'best_{target}.cbm')
-                shutil.copyfile(best_model_src, best_model_dst)
+                best_model_src = os.path.join(save_dir, target, f'FOLD_{best_idx+1}', 'model.tabpfn' if use_tabpfn else 'model.cbm')
+                best_model_dst = os.path.join(save_dir, target, f'best_{target}.tabpfn' if use_tabpfn else f'best_{target}.cbm')
+                # 若最佳模型存在則複製，否則跳過
+                if os.path.exists(best_model_src):
+                    shutil.copyfile(best_model_src, best_model_dst)
+                else:
+                    print(f'{target} 最佳模型檔案 {best_model_src} 不存在，跳過複製')
+                    logf.write(f'{target} 最佳模型檔案 {best_model_src} 不存在，跳過複製\n')
                 if target in config.BINARY_TARGETS:
                     print(f'{target} 平均AUC: {mean_score:.4f} (有效fold數: {len(valid_scores)})')
                     logf.write(f'{target} 平均AUC: {mean_score:.4f} (有效fold數: {len(valid_scores)})\n')

@@ -3,6 +3,7 @@
 """
 import matplotlib.pyplot as plt
 import numpy as np
+from collections import Counter
 
 
 def plot_feature_importance(model, feature_names, save_path, title=None, top_n=15):
@@ -38,8 +39,6 @@ def compute_class_weights(y):
     Returns:
         list，每個類別的權重
     """
-    from collections import Counter
-    import numpy as np
     counter = Counter(y)
     n_classes = len(set(y))
     total = len(y)

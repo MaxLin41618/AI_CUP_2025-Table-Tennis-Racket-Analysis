@@ -3,8 +3,8 @@ import pandas as pd
 import numpy as np
 from catboost import CatBoostClassifier
 import config
+import pickle
 
-# ========== 取得最新模型資料夾 ===========
 def get_latest_model_dir(base_dir='models'):
     """自動取得最新訓練的模型資料夾"""
     subdirs = [os.path.join(base_dir, d) for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d))]
@@ -13,20 +13,27 @@ def get_latest_model_dir(base_dir='models'):
     latest = max(subdirs, key=os.path.getmtime)
     return latest
 
-# ========== 載入模型 ===========
+
 def load_best_models(model_dir):
     """載入每個 target 的最佳模型"""
     models = {}
     for target in config.BINARY_TARGETS | config.MULTI_TARGETS:
         target_dir = os.path.join(model_dir, target)
-        model_path = os.path.join(target_dir, f'best_{target}.cbm')
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f'{model_path} 不存在')
-        models[target] = CatBoostClassifier()
-        models[target].load_model(model_path)
+        # 優先載入 TabPFN pickle 檔，其次載入 CatBoost cbm 檔
+        tab_path = os.path.join(target_dir, f'best_{target}.tabpfn')
+        cbm_path = os.path.join(target_dir, f'best_{target}.cbm')
+        if os.path.exists(tab_path):
+            with open(tab_path, 'rb') as f:
+                models[target] = pickle.load(f)
+        elif os.path.exists(cbm_path):
+            m = CatBoostClassifier()
+            m.load_model(cbm_path)
+            models[target] = m
+        else:
+            raise FileNotFoundError(f'找不到 {tab_path} 或 {cbm_path}')
     return models
 
-# ========== 預測與產生 submission ===========
+
 def predict_and_save(models, test_df, output_path):
     """以最佳模型做預測，產生 submission.csv"""
     result = pd.DataFrame()
@@ -47,12 +54,13 @@ def predict_and_save(models, test_df, output_path):
     # 明確指定輸出欄位順序
     columns = ['unique_id'] + config.BINARY_TARGETS_ORDER + config.PLAY_YEARS_COLS + config.LEVEL_COLS
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    result.to_csv(output_path, index=False, columns=columns)
+    # 強制浮點數以小數點格式輸出，避免科學記號（如1.00E-04）
+    result.to_csv(output_path, index=False, columns=columns, float_format='%.4f')
     print(f'已輸出 submission 至 {output_path}')
 
 # ========== 主程式 ===========
 def main():
-    """主流程：載入模型、預測、輸出 submission"""
+    """主流程：載入數據、模型、預測、輸出 submission"""
     # 讀取測試集
     test_df = pd.read_csv(config.TEST_CSV)
     # 取得最新模型資料夾
