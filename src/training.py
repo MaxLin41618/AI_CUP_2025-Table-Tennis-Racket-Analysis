@@ -134,9 +134,11 @@ def main():
                 best_valid_idx_in_valid = np.nanargmax(valid_scores_arr)
                 best_idx = valid_indices[best_valid_idx_in_valid]
                 best_score = scores[best_idx]
-                # best模型存於target資料夾下
-                best_model_src = os.path.join(save_dir, target, f'FOLD_{best_idx+1}', 'model.tabpfn' if use_tabpfn else 'model.cbm')
-                best_model_dst = os.path.join(save_dir, target, f'best_{target}.tabpfn' if use_tabpfn else f'best_{target}.cbm')
+                # 判斷最佳模型副檔名，log紀錄要正確
+                best_model_ext = 'tabpfn' if use_tabpfn else 'cbm'
+                # 最佳模型存於target資料夾下
+                best_model_src = os.path.join(save_dir, target, f'FOLD_{best_idx+1}', f'model.{best_model_ext}')
+                best_model_dst = os.path.join(save_dir, target, f'best_{target}.{best_model_ext}')
                 # 若最佳模型存在則複製，否則跳過
                 if os.path.exists(best_model_src):
                     shutil.copyfile(best_model_src, best_model_dst)
@@ -146,11 +148,11 @@ def main():
                 if target in config.BINARY_TARGETS:
                     print(f'{target} 平均AUC: {mean_score:.4f} (有效fold數: {len(valid_scores)})')
                     logf.write(f'{target} 平均AUC: {mean_score:.4f} (有效fold數: {len(valid_scores)})\n')
-                    logf.write(f'{target} 最佳fold: {best_idx+1}, AUC={best_score:.4f}, 檔案: {target}/best_{target}.cbm\n')
+                    logf.write(f'{target} 最佳fold: {best_idx+1}, AUC={best_score:.4f}, 檔案: {target}/best_{target}.{best_model_ext}\n')
                 else:
                     print(f'{target} 平均micro OvR AUC: {mean_score:.4f} (有效fold數: {len(valid_scores)})')
                     logf.write(f'{target} 平均micro OvR AUC: {mean_score:.4f} (有效fold數: {len(valid_scores)})\n')
-                    logf.write(f'{target} 最佳fold: {best_idx+1}, micro OvR AUC={best_score:.4f}, 檔案: {target}/best_{target}.cbm\n')
+                    logf.write(f'{target} 最佳fold: {best_idx+1}, micro OvR AUC={best_score:.4f}, 檔案: {target}/best_{target}.{best_model_ext}\n')
             else:
                 print(f'{target} 無有效AUC fold，無最佳模型')
                 logf.write(f'{target} 無有效AUC fold，無最佳模型\n')
