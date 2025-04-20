@@ -31,11 +31,6 @@ use_tabpfn = config.MODEL_TYPE.lower() == 'tabpfn'
 # ========== 主訓練流程 ==========
 def main():
     """以StratifiedGroupKFold訓練四個CatBoost模型，並記錄cv結果與平均值"""
-    # 載入資料
-    df = pd.read_csv(config.TRAIN_CSV)
-    X = df[config.FEATURES]
-    groups = df[config.PLAYER_ID_COL]
-
     # 建立儲存資料夾
     save_time = datetime.now().strftime('%Y%m%d_%H%M%S')
     save_dir = os.path.join('models', save_time)
@@ -46,13 +41,18 @@ def main():
     with open(log_path, 'w', encoding='utf-8-sig') as logf:
         logf.write(f'StratifiedGroupKFold: {config.K_FOLD}\n')
         logf.write(f'Features: {config.FEATURES}\n')
-        logf.write(f'Training file: {config.TRAIN_CSV}\n')
 
         cat_features = ['mode']  # 類別特徵
         label_encoders = {}
         cv_scores_dict = {}
         for target, model in TARGETS.items():
             print(f'\n====== {target} 任務交叉驗證 ======')
+            # 讀取 per-task 訓練集
+            train_file = config.TRAIN_CSVS[target]
+            logf.write(f'Training file for {target}: {train_file}\n')
+            df = pd.read_csv(train_file)
+            X = df[config.FEATURES]
+            groups = df[config.PLAYER_ID_COL]
             y = df[target]
             le = LabelEncoder()
             y_encoded = le.fit_transform(y)

@@ -2,6 +2,14 @@
 TRAIN_CSV = 'data/training.csv'
 TEST_CSV = 'data/testing.csv'
 
+# per-task training CSV
+TRAIN_CSVS = {
+    'gender': 'data/training_gender.csv',
+    'hold racket handed': 'data/training_hold_racket_handed.csv',
+    'play years': 'data/training_play_years.csv',
+    'level': 'data/training_level.csv'
+}
+
 # 固定目標
 PLAYER_ID_COL = 'player_id'  # GroupKFold用
 BINARY_TARGETS = {'gender', 'hold racket handed'}
@@ -16,8 +24,12 @@ RANDOM_SEED = 42
 VERBOSE = 0
 
 # 模型設定：'catboost' 或 'tabpfn'
-MODEL_TYPE = 'tabpfn'
-PHE_TIME = 300
+MODEL_TYPE = 'catboost'
+PHE_TIME = 600
+
+# 數據增強參數
+AUGMENT_JITTER_STD_RATIO = 0.01  # 噪聲標準差為原始訊號 std 的比例
+AUGMENT_JITTER_COUNT = 1        # 每筆資料要產生的增強樣本數
 
 # 使用的特徵（含小波特徵）
 def _gen_wavelet_feats(prefix):
