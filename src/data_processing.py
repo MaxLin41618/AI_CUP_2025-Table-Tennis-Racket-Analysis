@@ -155,7 +155,13 @@ if __name__ == '__main__':
     for task, path in config.TRAIN_CSVS.items():
         X_full = base_df_full[config.FEATURES]
         y_full = base_df_full[task]
-        selector = select_features(X_full.values, y_full.values, config.FEATURE_SELECTION_N_FEATURES, config.FEATURES)
+        selector = select_features(
+            X_full.values,
+            y_full.values,
+            config.FEATURE_SELECTION_N_FEATURES,
+            config.FEATURES,
+            task
+        )
         mask = selector.get_support()
         selected_feats = [config.FEATURES[i] for i, m in enumerate(mask) if m]
         selected_features_dict[task] = selected_feats
