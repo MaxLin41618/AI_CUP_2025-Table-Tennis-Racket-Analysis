@@ -15,7 +15,6 @@ from tabpfn import TabPFNClassifier
 from tabpfn_extensions.post_hoc_ensembles.sklearn_interface import AutoTabPFNClassifier
 import pickle
 import json
-from feature_selection import select_features
 
 # 隨機種子
 np.random.seed(config.RANDOM_SEED)
@@ -43,11 +42,14 @@ def main():
     with open(log_path, 'w', encoding='utf-8-sig') as logf:
         logf.write(f'StratifiedGroupKFold: {config.K_FOLD}\n')
         logf.write(f'Features: {config.FEATURES}\n')
+        
+        # 載入已選特徵映射
+        with open(os.path.join('data', 'selected_features.json'), 'r', encoding='utf-8-sig') as jf:
+            selected_features_dict = json.load(jf)
+        logf.write(f"Loaded selected_features: {selected_features_dict}\n")
 
         cat_features = ['mode']  # 類別特徵
-        label_encoders = {}
         cv_scores_dict = {}
-        selected_features_dict = {}  # 初始化 selected_features 映射
 
         for target, model in TARGETS.items():
             print(f'\n====== {target} 任務交叉驗證 ======')
@@ -56,20 +58,15 @@ def main():
             train_file = config.TRAIN_CSVS[target]
             logf.write(f'Training file for {target}: {train_file}\n')
             df = pd.read_csv(train_file)
-            X = df[config.FEATURES]
             groups = df[config.PLAYER_ID_COL]
             y = df[target]
             le = LabelEncoder()
             y_encoded = le.fit_transform(y)
             n_classes = len(np.unique(y_encoded))  # 該任務總標籤數
 
-            # 一次性特徵選擇
-            selector = select_features(X.values, y_encoded, config.FEATURE_SELECTION_N_FEATURES, config.FEATURES)
-            mask = selector.get_support()
-            selected_features = [config.FEATURES[i] for i, m in enumerate(mask) if m]
-            print(f"Selected features for {target}: {selected_features}")
-            logf.write(f"Selected features for {target}: {selected_features}\n")
-            selected_features_dict[target] = selected_features  # 儲存每個 target 的選中特徵
+            # 使用 data_processing 選好的特徵
+            selected_features = selected_features_dict[target]
+            logf.write(f"Using selected_features for {target}: {selected_features}\n")
             X = df[selected_features]
             sgkf = StratifiedGroupKFold(n_splits=config.K_FOLD, shuffle=True, random_state=42)
             cv_scores_dict[target] = []
@@ -175,12 +172,6 @@ def main():
         # ======== 四任務平均分數（本地評估用） ========
         print_and_log_overall_mean(cv_scores_dict, list(TARGETS.keys()), logf)
         logf.write('\n')
-
-    # 將所有 target 的 selected_features 映射儲存為 JSON
-    selected_json_path = os.path.join(save_dir, 'selected_features.json')
-    with open(selected_json_path, 'w', encoding='utf-8-sig') as jf:
-        json.dump(selected_features_dict, jf, ensure_ascii=False, indent=2)
-    print(f"已儲存特徵選擇映射至 {selected_json_path}")
 
 if __name__ == '__main__':
     main()

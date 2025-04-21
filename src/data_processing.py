@@ -21,6 +21,8 @@ import pywt  # 小波轉換
 import config
 import math
 import random
+import json
+from feature_selection import select_features
 random.seed(config.RANDOM_SEED)
 np.random.seed(config.RANDOM_SEED)
 
@@ -147,6 +149,22 @@ if __name__ == '__main__':
         meta_base.update(base_feat)
         base_features.append(meta_base)
 
+    # 一次性特徵選擇 (在所有原始樣本特徵上)
+    base_df_full = pd.DataFrame(base_features)
+    selected_features_dict = {}
+    for task, path in config.TRAIN_CSVS.items():
+        X_full = base_df_full[config.FEATURES]
+        y_full = base_df_full[task]
+        selector = select_features(X_full.values, y_full.values, config.FEATURE_SELECTION_N_FEATURES, config.FEATURES)
+        mask = selector.get_support()
+        selected_feats = [config.FEATURES[i] for i, m in enumerate(mask) if m]
+        selected_features_dict[task] = selected_feats
+    # 儲存特徵選擇結果
+    os.makedirs('data', exist_ok=True)
+    with open(os.path.join('data', 'selected_features.json'), 'w', encoding='utf-8-sig') as jf:
+        json.dump(selected_features_dict, jf, ensure_ascii=False, indent=2)
+    print(f"已儲存特徵選擇映射至 data/selected_features.json")
+
     # 全量 jitter 增強：對每筆原始樣本生成 AUGMENT_JITTER_COUNT 筆 jitter
     jitter_list = []
     if config.AUGMENT_JITTER_COUNT > 0:
@@ -197,6 +215,10 @@ if __name__ == '__main__':
         augmented = augmented[:total_need]
         df_aug = pd.DataFrame(augmented) if augmented else pd.DataFrame(columns=base_df.columns)
         df_task = pd.concat([base_df, df_aug], ignore_index=True).sample(frac=1, random_state=config.RANDOM_SEED).reset_index(drop=True)
+        
+        # 過濾只保留已選中特徵與 meta 欄位
+        meta_cols = [c for c in df_task.columns if c not in config.FEATURES]
+        df_task = df_task[meta_cols + selected_features_dict[task]]
         df_task.to_csv(path, index=False)
         print(f"已輸出平衡後的 {path}")
 

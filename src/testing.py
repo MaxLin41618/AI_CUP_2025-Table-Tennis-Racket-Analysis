@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import numpy as np
-from catboost import CatBoostClassifier
+from catboost import CatBoostClassifier, Pool
 import config
 import pickle
 import json
@@ -39,24 +39,47 @@ def predict_and_save(models, test_df, selected_features_dict, output_path):
     """以最佳模型做預測，產生 submission.csv"""
     result = pd.DataFrame()
     result['unique_id'] = test_df['unique_id']
+    # 決定預測時使用 TabPFN 還是 CatBoost
+    use_tabpfn = config.MODEL_TYPE.lower() == 'tabpfn'
 
-    # 使用訓練時儲存的特徵子集進行預測
     # 二分類任務
     for target in config.BINARY_TARGETS_ORDER:
         selected_feats = selected_features_dict[target]
-        X_test_sel = test_df[selected_feats]
-        proba = models[target].predict_proba(X_test_sel.values)[:, 0]
+        if use_tabpfn:
+            # TabPFN 接受 numpy array
+            X_np = test_df[selected_feats].values
+            proba = models[target].predict_proba(X_np)[:, 0]
+        else:
+            # CatBoost 使用 Pool 處理類別特徵
+            X_test_sel = test_df[selected_feats]
+            cat_features_loop = [f for f in ['mode'] if f in selected_feats]
+            test_pool = Pool(X_test_sel, cat_features=cat_features_loop)
+            proba = models[target].predict_proba(test_pool)[:, 0]
         result[target] = np.round(proba, 4)
+
     # 三分類任務: play years
     selected_feats = selected_features_dict['play years']
-    X_test_sel = test_df[selected_feats]
-    proba = models['play years'].predict_proba(X_test_sel.values)
+    if use_tabpfn:
+        X_np = test_df[selected_feats].values
+        proba = models['play years'].predict_proba(X_np)
+    else:
+        X_test_sel = test_df[selected_feats]
+        cat_features_loop = [f for f in ['mode'] if f in selected_feats]
+        test_pool = Pool(X_test_sel, cat_features=cat_features_loop)
+        proba = models['play years'].predict_proba(test_pool)
     for i, col in enumerate(config.PLAY_YEARS_COLS):
         result[col] = np.round(proba[:, i], 4)
+
     # 四分類任務: level
     selected_feats = selected_features_dict['level']
-    X_test_sel = test_df[selected_feats]
-    proba = models['level'].predict_proba(X_test_sel.values)
+    if use_tabpfn:
+        X_np = test_df[selected_feats].values
+        proba = models['level'].predict_proba(X_np)
+    else:
+        X_test_sel = test_df[selected_feats]
+        cat_features_loop = [f for f in ['mode'] if f in selected_feats]
+        test_pool = Pool(X_test_sel, cat_features=cat_features_loop)
+        proba = models['level'].predict_proba(test_pool)
     for i, col in enumerate(config.LEVEL_COLS):
         result[col] = np.round(proba[:, i], 4)
 
@@ -77,8 +100,8 @@ def main():
     latest_model_dir = get_latest_model_dir()
     # 載入最佳模型
     models = load_best_models(latest_model_dir)
-    # 載入訓練時儲存的特徵選擇映射
-    selected_json_path = os.path.join(latest_model_dir, 'selected_features.json')
+    # 從 data 資料夾讀取已選特徵映射
+    selected_json_path = os.path.join('data', 'selected_features.json')
     with open(selected_json_path, 'r', encoding='utf-8-sig') as jf:
         selected_features_dict = json.load(jf)
     # 預測並輸出
