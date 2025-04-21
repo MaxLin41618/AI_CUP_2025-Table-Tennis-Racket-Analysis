@@ -14,6 +14,8 @@ import copy
 from tabpfn import TabPFNClassifier
 from tabpfn_extensions.post_hoc_ensembles.sklearn_interface import AutoTabPFNClassifier
 import pickle
+import json
+from feature_selection import select_features
 
 # 隨機種子
 np.random.seed(config.RANDOM_SEED)
@@ -45,8 +47,11 @@ def main():
         cat_features = ['mode']  # 類別特徵
         label_encoders = {}
         cv_scores_dict = {}
+        selected_features_dict = {}  # 初始化 selected_features 映射
+
         for target, model in TARGETS.items():
             print(f'\n====== {target} 任務交叉驗證 ======')
+
             # 讀取 per-task 訓練集
             train_file = config.TRAIN_CSVS[target]
             logf.write(f'Training file for {target}: {train_file}\n')
@@ -57,7 +62,15 @@ def main():
             le = LabelEncoder()
             y_encoded = le.fit_transform(y)
             n_classes = len(np.unique(y_encoded))  # 該任務總標籤數
-            label_encoders[target] = le
+
+            # 一次性特徵選擇
+            selector = select_features(X.values, y_encoded, config.FEATURE_SELECTION_N_FEATURES, config.FEATURES)
+            mask = selector.get_support()
+            selected_features = [config.FEATURES[i] for i, m in enumerate(mask) if m]
+            print(f"Selected features for {target}: {selected_features}")
+            logf.write(f"Selected features for {target}: {selected_features}\n")
+            selected_features_dict[target] = selected_features  # 儲存每個 target 的選中特徵
+            X = df[selected_features]
             sgkf = StratifiedGroupKFold(n_splits=config.K_FOLD, shuffle=True, random_state=42)
             cv_scores_dict[target] = []
             
@@ -66,10 +79,10 @@ def main():
                 y_train, y_val = y_encoded[train_idx], y_encoded[val_idx]
                 # TabPFN: NOTE: 可以先用一般版快速推論看效果
                 if use_tabpfn:
-                    # model = AutoTabPFNClassifier(max_time=config.PHE_TIME, device='cuda', categorical_feature_indices=[0], random_state=config.RANDOM_SEED)
+                    # model = AutoTabPFNClassifier(max_time=config.PHE_TIME, preset='avoid_overfitting', device='cuda', categorical_feature_indices=[0], random_state=config.RANDOM_SEED)
                     model = TabPFNClassifier(categorical_features_indices=[0], random_state=config.RANDOM_SEED)
-                    model.fit(X_train[config.FEATURES].values, y_train)
-                    y_pred = model.predict_proba(X_val[config.FEATURES].values)
+                    model.fit(X_train.values, y_train)
+                    y_pred = model.predict_proba(X_val.values)
                 # CatBoost
                 else:
                     class_weights = compute_class_weights(y_train)
@@ -77,8 +90,10 @@ def main():
                     print(f"{target} Fold {fold+1} 類別權重: {class_weights_rounded}")
                     model = copy.deepcopy(TARGETS[target])
                     model.set_params(class_weights=class_weights)
-                    train_pool = Pool(X_train, y_train, cat_features=cat_features)
-                    val_pool = Pool(X_val, y_val, cat_features=cat_features)
+                    # 僅保留在 selected_features 中的類別特徵
+                    cat_features_loop = [f for f in cat_features if f in selected_features]
+                    train_pool = Pool(X_train, y_train, cat_features=cat_features_loop)
+                    val_pool = Pool(X_val, y_val, cat_features=cat_features_loop)
                     model.fit(train_pool, eval_set=val_pool)
                     y_pred = model.predict_proba(X_val)
                 # ======== 評分前標籤數檢查 ========
@@ -118,7 +133,7 @@ def main():
                         pf.write(str(model.get_params()))
                 if not use_tabpfn:
                     try:
-                        plot_feature_importance(model, config.FEATURES, os.path.join(fold_dir, 'importance.png'), title=f'Feature Importance - {target} FOLD_{fold+1}', top_n=15)
+                        plot_feature_importance(model, selected_features, os.path.join(fold_dir, 'importance.png'), title=f'Feature Importance - {target} FOLD_{fold+1}', top_n=15)
                     except Exception as e:
                         print(f"[特徵重要度繪圖失敗] {target} fold {fold+1}: {e}")
         # 計算平均分數
@@ -160,6 +175,12 @@ def main():
         # ======== 四任務平均分數（本地評估用） ========
         print_and_log_overall_mean(cv_scores_dict, list(TARGETS.keys()), logf)
         logf.write('\n')
+
+    # 將所有 target 的 selected_features 映射儲存為 JSON
+    selected_json_path = os.path.join(save_dir, 'selected_features.json')
+    with open(selected_json_path, 'w', encoding='utf-8-sig') as jf:
+        json.dump(selected_features_dict, jf, ensure_ascii=False, indent=2)
+    print(f"已儲存特徵選擇映射至 {selected_json_path}")
 
 if __name__ == '__main__':
     main()

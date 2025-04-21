@@ -25,7 +25,8 @@ VERBOSE = 0
 
 # 模型設定：'catboost' 或 'tabpfn'
 MODEL_TYPE = 'catboost'
-PHE_TIME = 600
+PHE_TIME = 60 * 10
+FEATURE_SELECTION_N_FEATURES = 20  # 一次性特徵選擇保留特徵數量
 
 # 數據增強參數
 AUGMENT_JITTER_STD_RATIO = 0.01  # 噪聲標準差為原始訊號 std 的比例
