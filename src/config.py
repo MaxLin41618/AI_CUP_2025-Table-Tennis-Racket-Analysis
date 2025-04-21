@@ -24,7 +24,7 @@ RANDOM_SEED = 42
 VERBOSE = 0
 
 # 模型設定：'catboost' 或 'tabpfn'
-MODEL_TYPE = 'tabpfn'
+MODEL_TYPE = 'catboost'
 PHE_TIME = 60 * 10
 FEATURE_SELECTION_N_FEATURES = 20  # 一次性特徵選擇保留特徵數量
 

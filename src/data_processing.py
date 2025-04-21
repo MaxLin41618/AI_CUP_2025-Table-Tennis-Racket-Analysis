@@ -22,7 +22,6 @@ import config
 import math
 import random
 import json
-from feature_selection import select_features
 random.seed(config.RANDOM_SEED)
 np.random.seed(config.RANDOM_SEED)
 
@@ -126,109 +125,8 @@ def extract_features_from_txt(txt_path: str, augment: bool = True) -> list:
             feature_dicts.append(extract_features_from_array(jittered))
     return feature_dicts
 
-# ========== 主特徵萃取流程 ==========
-if __name__ == '__main__':
-    # 設定路徑
-    info_path = os.path.join('data', 'raw', 'train_info.csv')
-    txt_dir = os.path.join('data', 'raw', 'train_data')
-    output_path = os.path.join('data', 'training.csv')
-    # 讀取 meta 資訊
-    info_df = pd.read_csv(info_path)
-    # 建立各任務共用的 base_features
-    base_features = []
-    for idx, row in info_df.iterrows():
-        uid = row['unique_id']
-        txt_path = os.path.join(txt_dir, f'{uid}.txt')
-        if not os.path.exists(txt_path):
-            print(f"找不到 {txt_path}")
-            continue
-        data = np.loadtxt(txt_path)
-        base_feat = extract_features_from_array(data)
-        meta_base = row.to_dict()
-        meta_base.pop('cut_point', None)
-        meta_base.update(base_feat)
-        base_features.append(meta_base)
-
-    # 一次性特徵選擇 (在所有原始樣本特徵上)
-    base_df_full = pd.DataFrame(base_features)
-    selected_features_dict = {}
-    for task, path in config.TRAIN_CSVS.items():
-        X_full = base_df_full[config.FEATURES]
-        y_full = base_df_full[task]
-        selector = select_features(
-            X_full.values,
-            y_full.values,
-            config.FEATURE_SELECTION_N_FEATURES,
-            config.FEATURES,
-            task
-        )
-        mask = selector.get_support()
-        selected_feats = [config.FEATURES[i] for i, m in enumerate(mask) if m]
-        selected_features_dict[task] = selected_feats
-    # 儲存特徵選擇結果
-    os.makedirs('data', exist_ok=True)
-    with open(os.path.join('data', 'selected_features.json'), 'w', encoding='utf-8-sig') as jf:
-        json.dump(selected_features_dict, jf, ensure_ascii=False, indent=2)
-    print(f"已儲存特徵選擇映射至 data/selected_features.json")
-
-    # 全量 jitter 增強：對每筆原始樣本生成 AUGMENT_JITTER_COUNT 筆 jitter
-    jitter_list = []
-    if config.AUGMENT_JITTER_COUNT > 0:
-        for meta_base in base_features:
-            uid = meta_base['unique_id']
-            row0 = info_df[info_df['unique_id'] == uid].iloc[0].to_dict()
-            row0.pop('cut_point', None)
-            txt_file = os.path.join(txt_dir, f'{uid}.txt')
-            data = np.loadtxt(txt_file)
-            for _ in range(config.AUGMENT_JITTER_COUNT):
-                jittered = np.stack([
-                    jitter_signal(arr, config.AUGMENT_JITTER_STD_RATIO) for arr in data.T
-                ], axis=1)
-                feat = extract_features_from_array(jittered)
-                meta_new = row0.copy()
-                meta_new.update(feat)
-                jitter_list.append(meta_new)
-    # 合併原始樣本與全量 jitter
-    base_df = pd.DataFrame(base_features + jitter_list)
-
-    # per-task 訓練集平衡並產生 jitter 增強樣本
-    for task, path in config.TRAIN_CSVS.items():
-        grouped = base_df.groupby(task)
-        counts = grouped.size().to_dict()
-        max_n = max(counts.values())
-        augmented = []
-        total_need = sum(max_n - c for c in counts.values())
-        for lbl, group in grouped:
-            need = max_n - len(group)
-            if need <= 0:
-                continue
-            samples = math.ceil(need / config.AUGMENT_JITTER_COUNT)
-            uids = info_df.loc[info_df[task] == lbl, 'unique_id'].tolist()
-            chosen = random.choices(uids, k=samples)
-            for uid_sel in chosen:
-                row_info = info_df[info_df['unique_id'] == uid_sel].iloc[0].to_dict()
-                row_info.pop('cut_point', None)
-                txt_p = os.path.join(txt_dir, f'{uid_sel}.txt')
-                data_sel = np.loadtxt(txt_p)
-                for _ in range(config.AUGMENT_JITTER_COUNT):
-                    jittered = np.stack([
-                        jitter_signal(arr, config.AUGMENT_JITTER_STD_RATIO) for arr in data_sel.T
-                    ], axis=1)
-                    feat = extract_features_from_array(jittered)
-                    meta = row_info.copy()
-                    meta.update(feat)
-                    augmented.append(meta)
-        augmented = augmented[:total_need]
-        df_aug = pd.DataFrame(augmented) if augmented else pd.DataFrame(columns=base_df.columns)
-        df_task = pd.concat([base_df, df_aug], ignore_index=True).sample(frac=1, random_state=config.RANDOM_SEED).reset_index(drop=True)
-        
-        # 過濾只保留已選中特徵與 meta 欄位
-        meta_cols = [c for c in df_task.columns if c not in config.FEATURES]
-        df_task = df_task[meta_cols + selected_features_dict[task]]
-        df_task.to_csv(path, index=False)
-        print(f"已輸出平衡後的 {path}")
-
-    # ========== 測試集處理 ==========
+def process_test_data():
+    """處理測試集"""
     test_info_path = os.path.join('data', 'raw', 'test_info.csv')
     test_txt_dir = os.path.join('data', 'raw', 'test_data')
     test_output_path = os.path.join('data', 'testing.csv')
@@ -241,7 +139,6 @@ if __name__ == '__main__':
             if not os.path.exists(txt_path):
                 print(f"找不到 {txt_path}")
                 continue
-            # 原始測試資料（不做增強）
             feats = extract_features_from_txt(txt_path, augment=False)
             for feat in feats:
                 meta = row.to_dict()
@@ -252,5 +149,8 @@ if __name__ == '__main__':
                 meta.update(feat)
                 test_features_list.append(meta)
         test_out_df = pd.DataFrame(test_features_list)
-        test_out_df.to_csv(test_output_path, index=False)
+        test_out_df.to_csv(test_output_path, index=False, encoding='utf-8-sig')
         print(f"已輸出 {test_output_path}")
+
+if __name__ == '__main__':
+    process_test_data()
