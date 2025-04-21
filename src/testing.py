@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from catboost import CatBoostClassifier, Pool
 import config
+from data_processing import extract_features_from_array
 import pickle
 import json
 
@@ -94,8 +95,21 @@ def predict_and_save(models, test_df, selected_features_dict, output_path):
 # ========== 主程式 ===========
 def main():
     """主流程：載入數據、模型、預測、輸出 submission"""
-    # 讀取測試集
-    test_df = pd.read_csv(config.TEST_CSV)
+    # 讀取測試集 meta 並產生測試特徵
+    meta_df = pd.read_csv(config.TEST_CSV)
+    feature_list = []
+    for _, row in meta_df.iterrows():
+        # 將 unique_id 轉為整數以對應檔案名稱
+        uid = int(row['unique_id'])
+        row_meta = row.to_dict()
+        # 更新 unique_id 為整數，避免 CSV 顯示浮點
+        row_meta['unique_id'] = uid
+        txt_path = os.path.join('data', 'raw', 'test_data', f'{uid}.txt')
+        data = np.loadtxt(txt_path)
+        feat = extract_features_from_array(data)
+        row_meta.update(feat)
+        feature_list.append(row_meta)
+    test_df = pd.DataFrame(feature_list)
     # 取得最新模型資料夾
     latest_model_dir = get_latest_model_dir()
     # 載入最佳模型

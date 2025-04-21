@@ -3,13 +3,12 @@
 ====================
 本模組負責將原始時序感測資料 (Ax, Ay, Az, Gx, Gy, Gz) 及 meta 資訊 (unique_id, player_id, mode, gender, hold racket handed, play years, level)
 結合並萃取豐富的時域與頻域特徵，包含：
-- 均值、標準差、方差、最大/最小值、中位數、四分位數、峰度、偏度、過零率、均方根、能量
+- 均值、標準差、方差、最大/最小值、中位數、四分位數、峰度、偏度、均方根、能量
 - 主頻、頻譜質心、頻譜熵、頻譜能量
 - 合加速度、合角速度及其所有統計特徵
 - 小波轉換近似係數的均值、標準差、能量
 - jitter 增強
 
-為每個任務產生各自的training.csv，供後續模型訓練使用。
 """
 
 import os
@@ -65,6 +64,26 @@ def calc_freq_features(x: np.ndarray, prefix: str, fs: float = 85.0) -> dict:
     return features
 
 
+def calc_advanced_freq_features(x: np.ndarray, prefix: str, fs: float = 85.0) -> dict:
+    """計算頻域進階特徵：Dominant Frequency Amplitude、Band Power、Spectral Peak Count"""
+    features = {}
+    N = len(x)
+    X = rfft(x)
+    freqs = rfftfreq(N, d=1/fs)
+    mag = np.abs(X)
+    # 主頻幅值
+    dom_idx = np.argmax(mag[1:]) + 1
+    features[f'{prefix}_dominant_freq_amp'] = mag[dom_idx]
+    # 頻帶能量
+    for low, high in [(0,1), (1,3), (3,5)]:
+        idx = np.where((freqs >= low) & (freqs < high))[0]
+        features[f'{prefix}_band_{low}_{high}_power'] = np.sum(np.square(mag[idx]))
+    # 頻譜峰值數量
+    peaks = np.where((mag[1:-1] > mag[:-2]) & (mag[1:-1] > mag[2:]))[0]
+    features[f'{prefix}_spectral_peak_count'] = len(peaks)
+    return features
+
+
 def calc_wavelet_features(x: np.ndarray, prefix: str, wavelet: str = 'db4') -> dict:
     """
     計算小波轉換特徵
@@ -85,10 +104,75 @@ def calc_wavelet_features(x: np.ndarray, prefix: str, wavelet: str = 'db4') -> d
     return features
 
 
+def calc_advanced_time_features(x: np.ndarray, prefix: str) -> dict:
+    """計算時域進階特徵：平均絕對變化量、平均變化率、零交叉率、斜率均值/變異"""
+    features = {}
+    diffs = np.diff(x)
+    features[f'{prefix}_mean_abs_change'] = np.mean(np.abs(diffs))
+    features[f'{prefix}_mean_change_rate'] = np.mean(diffs / (x[:-1] + 1e-8))
+    zero_crossings = np.where(np.diff(np.sign(x)) != 0)[0]
+    features[f'{prefix}_zero_crossing_rate'] = len(zero_crossings) / len(x)
+    features[f'{prefix}_slope_mean'] = np.mean(diffs)
+    features[f'{prefix}_slope_std'] = np.std(diffs)
+    return features
+
+
+def calc_window_features(x: np.ndarray, prefix: str, window_size: int = 85, step: int = None) -> dict:
+    """計算滑動視窗特徵：每窗平均、方差、最小、最大，並對窗級特徵取摘要"""
+    if step is None:
+        step = window_size // 2
+    N = len(x)
+    windows = [x[i:i+window_size] for i in range(0, N - window_size + 1, step)]
+    features = {}
+    if not windows:
+        # 無足夠長度時填0
+        for stat in ['mean', 'std', 'min', 'max']:
+            features[f'{prefix}_win_{stat}_mean'] = 0.0
+            features[f'{prefix}_win_{stat}_std'] = 0.0
+        return features
+    means = np.array([np.mean(w) for w in windows])
+    vars_ = np.array([np.var(w) for w in windows])
+    mins = np.array([np.min(w) for w in windows])
+    maxs = np.array([np.max(w) for w in windows])
+    # 摘要
+    features[f'{prefix}_win_mean_mean'] = np.mean(means)
+    features[f'{prefix}_win_mean_std'] = np.std(means)
+    features[f'{prefix}_win_var_mean'] = np.mean(vars_)
+    features[f'{prefix}_win_var_std'] = np.std(vars_)
+    features[f'{prefix}_win_min_mean'] = np.mean(mins)
+    features[f'{prefix}_win_min_std'] = np.std(mins)
+    features[f'{prefix}_win_max_mean'] = np.mean(maxs)
+    features[f'{prefix}_win_max_std'] = np.std(maxs)
+    return features
+
+
 def jitter_signal(x: np.ndarray, std_ratio: float) -> np.ndarray:
     """對單軸訊號加入高斯雜訊"""
     noise = np.random.normal(0, np.std(x) * std_ratio, size=x.shape)
     return x + noise
+
+
+def calc_cross_axis_features(data: np.ndarray) -> dict:
+    """計算跨軸相關及 AccVec/GyroVec 比率"""
+    Ax, Ay, Az, Gx, Gy, Gz = data.T
+    features = {}
+    def corr(x, y):
+        if np.std(x) == 0 or np.std(y) == 0:
+            return 0.0
+        return np.corrcoef(x, y)[0,1]
+    # 加速度各軸相關
+    features['Ax_Ay_corr'] = corr(Ax, Ay)
+    features['Ax_Az_corr'] = corr(Ax, Az)
+    features['Ay_Az_corr'] = corr(Ay, Az)
+    # 角速度各軸相關
+    features['Gx_Gy_corr'] = corr(Gx, Gy)
+    features['Gx_Gz_corr'] = corr(Gx, Gz)
+    features['Gy_Gz_corr'] = corr(Gy, Gz)
+    # AccVec/GyroVec mean ratio
+    acc = np.sqrt(Ax**2 + Ay**2 + Az**2)
+    gyro = np.sqrt(Gx**2 + Gy**2 + Gz**2)
+    features['AccGyro_mean_ratio'] = np.mean(acc) / (np.mean(gyro) + 1e-8)
+    return features
 
 
 def extract_features_from_array(data: np.ndarray) -> dict:
@@ -97,16 +181,27 @@ def extract_features_from_array(data: np.ndarray) -> dict:
     features = {}
     for axis, arr in zip(['Ax','Ay','Az','Gx','Gy','Gz'], [Ax, Ay, Az, Gx, Gy, Gz]):
         features.update(calc_time_features(arr, axis))
+        features.update(calc_advanced_time_features(arr, axis))
         features.update(calc_freq_features(arr, axis))
+        features.update(calc_advanced_freq_features(arr, axis))
         features.update(calc_wavelet_features(arr, axis))
+        features.update(calc_window_features(arr, axis))
     acc = np.sqrt(Ax**2 + Ay**2 + Az**2)
     gyro = np.sqrt(Gx**2 + Gy**2 + Gz**2)
     features.update(calc_time_features(acc, 'AccVec'))
+    features.update(calc_advanced_time_features(acc, 'AccVec'))
     features.update(calc_freq_features(acc, 'AccVec'))
+    features.update(calc_advanced_freq_features(acc, 'AccVec'))
     features.update(calc_wavelet_features(acc, 'AccVec'))
+    features.update(calc_window_features(acc, 'AccVec'))
     features.update(calc_time_features(gyro, 'GyroVec'))
+    features.update(calc_advanced_time_features(gyro, 'GyroVec'))
     features.update(calc_freq_features(gyro, 'GyroVec'))
+    features.update(calc_advanced_freq_features(gyro, 'GyroVec'))
     features.update(calc_wavelet_features(gyro, 'GyroVec'))
+    features.update(calc_window_features(gyro, 'GyroVec'))
+    # 跨軸相關特徵
+    features.update(calc_cross_axis_features(data))
     return features
 
 

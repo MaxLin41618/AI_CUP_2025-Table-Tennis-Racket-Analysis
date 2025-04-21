@@ -36,6 +36,33 @@ AUGMENT_JITTER_COUNT = 1        # 每筆資料要產生的增強樣本數
 def _gen_wavelet_feats(prefix):
     return [f'{prefix}_wavelet_mean', f'{prefix}_wavelet_std', f'{prefix}_wavelet_energy']
 
+def _gen_advanced_time_feats(prefix):
+    """生成進階時域特徵名稱"""
+    return [
+        f'{prefix}_mean_abs_change',
+        f'{prefix}_mean_change_rate',
+        f'{prefix}_zero_crossing_rate',
+        f'{prefix}_slope_mean',
+        f'{prefix}_slope_std',
+    ]
+
+def _gen_advanced_freq_feats(prefix):
+    """生成進階頻域特徵名稱"""
+    feats = [f'{prefix}_dominant_freq_amp']
+    for low, high in [(0,1), (1,3), (3,5)]:
+        feats.append(f'{prefix}_band_{low}_{high}_power')
+    feats.append(f'{prefix}_spectral_peak_count')
+    return feats
+
+def _gen_window_feats(prefix):
+    """生成滑動視窗摘要特徵名稱"""
+    stats = ['mean', 'var', 'min', 'max']
+    feats = []
+    for s in stats:
+        feats.append(f'{prefix}_win_{s}_mean')
+        feats.append(f'{prefix}_win_{s}_std')
+    return feats
+
 FEATURES = [
     'mode',
     # Ax
@@ -63,3 +90,21 @@ FEATURES = [
     'GyroVec_mean', 'GyroVec_std', 'GyroVec_var', 'GyroVec_min', 'GyroVec_max', 'GyroVec_median', 'GyroVec_q25', 'GyroVec_q75', 'GyroVec_kurtosis', 'GyroVec_skew', 'GyroVec_rms', 'GyroVec_energy', 'GyroVec_dominant_freq', 'GyroVec_spectral_centroid', 'GyroVec_spectral_entropy', 'GyroVec_spectral_energy',
     *_gen_wavelet_feats('GyroVec'),
 ]
+
+# 將進階時域特徵加入 FEATURES
+for _prefix in ['Ax','Ay','Az','Gx','Gy','Gz','AccVec','GyroVec']:
+    FEATURES.extend(_gen_advanced_time_feats(_prefix))
+
+# 將進階頻域特徵加入 FEATURES
+for _prefix in ['Ax','Ay','Az','Gx','Gy','Gz','AccVec','GyroVec']:
+    FEATURES.extend(_gen_advanced_freq_feats(_prefix))
+
+# 將滑動視窗特徵加入 FEATURES
+for _prefix in ['Ax','Ay','Az','Gx','Gy','Gz','AccVec','GyroVec']:
+    FEATURES.extend(_gen_window_feats(_prefix))
+
+# 將跨軸相關特徵加入 FEATURES
+_CROSS_AXES = [('Ax','Ay'), ('Ax','Az'), ('Ay','Az'), ('Gx','Gy'), ('Gx','Gz'), ('Gy','Gz')]
+for x, y in _CROSS_AXES:
+    FEATURES.append(f'{x}_{y}_corr')
+FEATURES.append('AccGyro_mean_ratio')
