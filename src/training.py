@@ -77,6 +77,15 @@ def main():
             selected_features_folds_by_target[target] = []
             
             for fold, (train_idx, val_idx) in enumerate(sgkf.split(info_df, y_encoded, groups=groups)):
+                # 檢查此 fold 是否包含所有類別標籤，若不齊全則跳過
+                fold_labels = y_encoded[train_idx]
+                if len(np.unique(fold_labels)) < n_classes:
+                    print(f"[Fold {fold+1}] 標籤不足({len(np.unique(fold_labels))}/{n_classes})，跳過此 fold")
+                    logf.write(f"[Fold {fold+1}] 標籤不足({len(np.unique(fold_labels))}/{n_classes})，跳過此 fold\n")
+                    cv_scores_dict[target].append(np.nan)
+                    selected_features_folds_by_target[target].append([])
+                    continue
+
                 # 讀取 fold 的 raw 訓練集並執行初始 jitter 增強
                 uids_train = [uids_all[i] for i in train_idx]
                 labs_train = [y_encoded[i] for i in train_idx]
@@ -169,8 +178,8 @@ def main():
                 X_val = X_val_df[selected_features_fold]
                 # TabPFN: NOTE: 可以先用一般版快速推論看效果
                 if use_tabpfn:
-                    # model = AutoTabPFNClassifier(max_time=config.PHE_TIME, preset='avoid_overfitting', device='cuda', categorical_feature_indices=[0], random_state=config.RANDOM_SEED)
-                    model = TabPFNClassifier(categorical_features_indices=[0], random_state=config.RANDOM_SEED)
+                    model = AutoTabPFNClassifier(max_time=config.PHE_TIME, preset='avoid_overfitting', device='cuda', categorical_feature_indices=[0], random_state=config.RANDOM_SEED)
+                    # model = TabPFNClassifier(categorical_features_indices=[0], random_state=config.RANDOM_SEED)
                     model.fit(X_train.values, y_train_aug)
                     y_pred = model.predict_proba(X_val.values)
                 # CatBoost
