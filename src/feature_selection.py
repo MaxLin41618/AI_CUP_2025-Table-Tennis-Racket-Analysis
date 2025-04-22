@@ -31,7 +31,7 @@ def select_features(X: np.ndarray, y: np.ndarray, n_features_to_select: int, fea
             'objective': objective,
             'metric': metric,
             'importance_type': 'gain',
-            'random_state': config.RANDOM_SEED,
+            'random_state': 43,
             'n_estimators': 1000,
             'subsample': 0.8,
             'class_weight': 'balanced',
@@ -45,7 +45,7 @@ def select_features(X: np.ndarray, y: np.ndarray, n_features_to_select: int, fea
             'metric': metric,
             'num_class': num_class,
             'importance_type': 'gain',
-            'random_state': config.RANDOM_SEED,
+            'random_state': 46,
             'n_estimators': 1000,
             'subsample': 0.8,
             'class_weight': 'balanced',
@@ -54,7 +54,7 @@ def select_features(X: np.ndarray, y: np.ndarray, n_features_to_select: int, fea
     model = LGBMClassifier(**params)
     
     # 使用 StratifiedShuffleSplit 分割驗證集以進行早停
-    sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=config.RANDOM_SEED)
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=45)
     train_idx, val_idx = next(sss.split(X, y))
     X_train, X_val = X[train_idx], X[val_idx]
     y_train, y_val = y[train_idx], y[val_idx]

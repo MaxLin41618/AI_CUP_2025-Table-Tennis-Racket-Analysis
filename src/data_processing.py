@@ -1,14 +1,10 @@
-"""
-資料處理與特徵工程
-====================
-本模組負責將原始時序感測資料 (Ax, Ay, Az, Gx, Gy, Gz) 及 meta 資訊 (unique_id, player_id, mode, gender, hold racket handed, play years, level)
-結合並萃取豐富的時域與頻域特徵，包含：
-- 均值、標準差、方差、最大/最小值、中位數、四分位數、峰度、偏度、均方根、能量
-- 主頻、頻譜質心、頻譜熵、頻譜能量
-- 合加速度、合角速度及其所有統計特徵
-- 小波轉換近似係數的均值、標準差、能量
-- jitter 增強
+"""data_processing.py
+資料處理與特徵工程模組。
 
+此模組負責從六軸感測資料 (Ax, Ay, Az, Gx, Gy, Gz)
+與 meta 資訊 (unique_id, player_id, mode, gender, hold racket handed, play years, level)
+結合並萃取豐富的特徵，包括時域、頻域、小波、窗口摘要、
+跨軸相關、分形維度及 Hjorth 參數。
 """
 
 import os
@@ -21,6 +17,7 @@ import config
 import math
 import random
 import json
+from scipy.fftpack import dct  # 新增 DCT
 random.seed(config.RANDOM_SEED)
 np.random.seed(config.RANDOM_SEED)
 
@@ -175,6 +172,45 @@ def calc_cross_axis_features(data: np.ndarray) -> dict:
     return features
 
 
+def calc_fractal_dimension(x: np.ndarray, prefix: str) -> dict:
+    """計算 Katz 分形維度 (Fractal Dimension)"""
+    N = len(x)
+    if N < 2:
+        return {f'{prefix}_fractal_dimension': 0.0}
+    L = np.sum(np.sqrt(1 + np.diff(x) ** 2))
+    d = np.max(np.sqrt((np.arange(N)) ** 2 + (x - x[0]) ** 2))
+    fd = np.log10(N) / (np.log10(N) + np.log10(L / d)) if d > 0 and L > 0 else 0.0
+    return {f'{prefix}_fractal_dimension': fd}
+
+
+def calc_hjorth_parameters(x: np.ndarray, prefix: str) -> dict:
+    """計算 Hjorth 參數：Activity, Mobility, Complexity"""
+    var_x = np.var(x)
+    dx = np.diff(x)
+    var_dx = np.var(dx)
+    ddx = np.diff(dx) if len(dx) > 1 else np.array([0.0])
+    var_ddx = np.var(ddx)
+    activity = var_x
+    mobility = np.sqrt(var_dx / (var_x + 1e-8)) if var_x > 0 else 0.0
+    complexity = np.sqrt(var_ddx / (var_dx + 1e-8)) / (mobility + 1e-8) if var_dx > 0 else 0.0
+    return {
+        f'{prefix}_hjorth_activity': activity,
+        f'{prefix}_hjorth_mobility': mobility,
+        f'{prefix}_hjorth_complexity': complexity
+    }
+
+
+def calc_dct_features(x: np.ndarray, prefix: str) -> dict:
+    """計算離散餘弦變換 (DCT) 特徵"""
+    X = dct(x, norm='ortho')
+    mag = np.abs(X)
+    return {
+        f'{prefix}_dct_mean': np.mean(mag),
+        f'{prefix}_dct_std': np.std(mag),
+        f'{prefix}_dct_energy': np.sum(np.square(mag))
+    }
+
+
 def extract_features_from_array(data: np.ndarray) -> dict:
     """根據六軸數據陣列萃取特徵"""
     Ax, Ay, Az, Gx, Gy, Gz = data.T
@@ -186,6 +222,9 @@ def extract_features_from_array(data: np.ndarray) -> dict:
         features.update(calc_advanced_freq_features(arr, axis))
         features.update(calc_wavelet_features(arr, axis))
         features.update(calc_window_features(arr, axis))
+        features.update(calc_fractal_dimension(arr, axis))
+        features.update(calc_hjorth_parameters(arr, axis))
+        features.update(calc_dct_features(arr, axis))  # 新增 DCT 特徵
     acc = np.sqrt(Ax**2 + Ay**2 + Az**2)
     gyro = np.sqrt(Gx**2 + Gy**2 + Gz**2)
     features.update(calc_time_features(acc, 'AccVec'))
@@ -194,12 +233,18 @@ def extract_features_from_array(data: np.ndarray) -> dict:
     features.update(calc_advanced_freq_features(acc, 'AccVec'))
     features.update(calc_wavelet_features(acc, 'AccVec'))
     features.update(calc_window_features(acc, 'AccVec'))
+    features.update(calc_fractal_dimension(acc, 'AccVec'))
+    features.update(calc_hjorth_parameters(acc, 'AccVec'))
+    features.update(calc_dct_features(acc, 'AccVec'))  # 新增 DCT 特徵
     features.update(calc_time_features(gyro, 'GyroVec'))
     features.update(calc_advanced_time_features(gyro, 'GyroVec'))
     features.update(calc_freq_features(gyro, 'GyroVec'))
     features.update(calc_advanced_freq_features(gyro, 'GyroVec'))
     features.update(calc_wavelet_features(gyro, 'GyroVec'))
     features.update(calc_window_features(gyro, 'GyroVec'))
+    features.update(calc_fractal_dimension(gyro, 'GyroVec'))
+    features.update(calc_hjorth_parameters(gyro, 'GyroVec'))
+    features.update(calc_dct_features(gyro, 'GyroVec'))  # 新增 DCT 特徵
     # 跨軸相關特徵
     features.update(calc_cross_axis_features(data))
     return features

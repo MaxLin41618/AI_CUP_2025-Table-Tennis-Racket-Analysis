@@ -1,3 +1,11 @@
+"""testing.py
+主要功能:
+    - 從最新模型資料夾載入最佳模型
+    - 提取測試數據特徵
+    - 使用 CatBoost 或 TabPFN 進行預測
+    - 輸出 submission.csv
+"""
+
 import os
 import pandas as pd
 import numpy as np
@@ -52,8 +60,10 @@ def predict_and_save(models, test_df, selected_features_dict, output_path):
             proba = models[target].predict_proba(X_np)[:, 0]
         else:
             # CatBoost 使用 Pool 處理類別特徵
-            X_test_sel = test_df[selected_feats]
+            X_test_sel = test_df[selected_feats].copy()
             cat_features_loop = [f for f in ['mode'] if f in selected_feats]
+            if cat_features_loop:
+                X_test_sel[cat_features_loop] = X_test_sel[cat_features_loop].astype(str)
             test_pool = Pool(X_test_sel, cat_features=cat_features_loop)
             proba = models[target].predict_proba(test_pool)[:, 0]
         result[target] = np.round(proba, 4)
@@ -64,8 +74,10 @@ def predict_and_save(models, test_df, selected_features_dict, output_path):
         X_np = test_df[selected_feats].values
         proba = models['play years'].predict_proba(X_np)
     else:
-        X_test_sel = test_df[selected_feats]
+        X_test_sel = test_df[selected_feats].copy()
         cat_features_loop = [f for f in ['mode'] if f in selected_feats]
+        if cat_features_loop:
+            X_test_sel[cat_features_loop] = X_test_sel[cat_features_loop].astype(str)
         test_pool = Pool(X_test_sel, cat_features=cat_features_loop)
         proba = models['play years'].predict_proba(test_pool)
     for i, col in enumerate(config.PLAY_YEARS_COLS):
@@ -77,8 +89,10 @@ def predict_and_save(models, test_df, selected_features_dict, output_path):
         X_np = test_df[selected_feats].values
         proba = models['level'].predict_proba(X_np)
     else:
-        X_test_sel = test_df[selected_feats]
+        X_test_sel = test_df[selected_feats].copy()
         cat_features_loop = [f for f in ['mode'] if f in selected_feats]
+        if cat_features_loop:
+            X_test_sel[cat_features_loop] = X_test_sel[cat_features_loop].astype(str)
         test_pool = Pool(X_test_sel, cat_features=cat_features_loop)
         proba = models['level'].predict_proba(test_pool)
     for i, col in enumerate(config.LEVEL_COLS):

@@ -9,7 +9,7 @@ from datetime import datetime
 from sklearn.preprocessing import LabelEncoder
 import numpy as np
 import shutil
-from utils import print_and_log_overall_mean, compute_class_weights, plot_feature_importance
+from utils import print_and_log_overall_mean, compute_class_weights, plot_feature_importance, compute_feature_fingerprint, save_feature_cache, load_feature_cache
 import copy
 from tabpfn import TabPFNClassifier
 from tabpfn_extensions.post_hoc_ensembles.sklearn_interface import AutoTabPFNClassifier
@@ -72,11 +72,13 @@ def main():
             le = LabelEncoder()
             y_encoded = le.fit_transform(y)
             n_classes = len(np.unique(y_encoded))
-            sgkf = StratifiedGroupKFold(n_splits=config.K_FOLD, shuffle=True, random_state=42)
+            sgkf = StratifiedGroupKFold(n_splits=config.K_FOLD, shuffle=True, random_state=config.RANDOM_SEED)
             cv_scores_dict[target] = []
             selected_features_folds_by_target[target] = []
             
             for fold, (train_idx, val_idx) in enumerate(sgkf.split(info_df, y_encoded, groups=groups)):
+                # 設定 python random 的 seed，確保取樣一致
+                random.seed(config.RANDOM_SEED + fold)
                 # 檢查此 fold 是否包含所有類別標籤，若不齊全則跳過
                 fold_labels = y_encoded[train_idx]
                 if len(np.unique(fold_labels)) < n_classes:
@@ -85,69 +87,93 @@ def main():
                     cv_scores_dict[target].append(np.nan)
                     selected_features_folds_by_target[target].append([])
                     continue
-
-                # 讀取 fold 的 raw 訓練集並執行初始 jitter 增強
-                uids_train = [uids_all[i] for i in train_idx]
-                labs_train = [y_encoded[i] for i in train_idx]
-                feats_list, labs_list = [], []
-                for uid, lab in zip(uids_train, labs_train):
-                    # 結合 meta 和原始/jitter 特徵
-                    row_meta = info_df[info_df['unique_id'] == uid].iloc[0].to_dict()
-                    row_meta.pop('cut_point', None)
-                    txt_file = os.path.join('data', 'raw', 'train_data', f'{uid}.txt')
-                    data = np.loadtxt(txt_file)
-                    # 原始特徵
-                    feat = extract_features_from_array(data)
-                    row = row_meta.copy(); row.update(feat)
-                    feats_list.append(row); labs_list.append(lab)
-                    # 初始 jitter 增強
-                    for _ in range(config.AUGMENT_JITTER_COUNT):
-                        jittered = np.stack(
-                            [jitter_signal(arr, config.AUGMENT_JITTER_STD_RATIO) for arr in data.T],
-                            axis=1)
-                        feat_jit = extract_features_from_array(jittered)
-                        row_jit = row_meta.copy(); row_jit.update(feat_jit)
-                        feats_list.append(row_jit); labs_list.append(lab)
-                X_train_init = pd.DataFrame(feats_list)[config.FEATURES]
-                y_train_init = np.array(labs_list)
-                # 平衡資料：必要時額外 jitter 增強
-                from collections import Counter
-                cnts = Counter(y_train_init)
-                max_n = max(cnts.values())
-                jitter_extras, jitter_labels = [], []
-                for label, count in cnts.items():
-                    if count < max_n:
-                        need = max_n - count
-                        samples = math.ceil(need / config.AUGMENT_JITTER_COUNT)
-                        uids_of_label = [u for u, lab in zip(uids_train, labs_train) if lab == label]
-                        chosen = random.choices(uids_of_label, k=samples)
-                        for uid_sel in chosen:
-                            row_meta = info_df[info_df['unique_id'] == uid_sel].iloc[0].to_dict()
-                            row_meta.pop('cut_point', None)
-                            txtp = os.path.join('data', 'raw', 'train_data', f'{uid_sel}.txt')
-                            dat = np.loadtxt(txtp)
-                            for _ in range(config.AUGMENT_JITTER_COUNT):
-                                jit = np.stack(
-                                    [jitter_signal(arr, config.AUGMENT_JITTER_STD_RATIO) for arr in dat.T],
-                                    axis=1)
-                                feat_jit = extract_features_from_array(jit)
-                                row_jit = row_meta.copy(); row_jit.update(feat_jit)
-                                jitter_extras.append(row_jit); jitter_labels.append(label)
-                # 限制至所需數量
-                extra_need = max_n - len(y_train_init)
-                jitter_extras = jitter_extras[:extra_need]
-                jitter_labels = jitter_labels[:extra_need]
-                if jitter_extras:
-                    X_train_aug = pd.concat(
-                        [X_train_init, pd.DataFrame(jitter_extras)[config.FEATURES]],
-                        ignore_index=True)
-                    y_train_aug = np.concatenate([y_train_init, np.array(jitter_labels)])
+                
+                # 特徵工程快取：計算 fingerprint 並讀取 cache
+                fp = compute_feature_fingerprint(config.FEATURES, config.AUGMENT_JITTER_COUNT, config.AUGMENT_JITTER_STD_RATIO)
+                cache_fname = f"{target}_cv{config.K_FOLD}_rs{config.RANDOM_SEED}_fold{fold+1}_{fp}.pkl"
+                cached = load_feature_cache(config.FEATURE_CACHE_DIR, cache_fname) if config.ENABLE_FEATURE_CACHE else None
+                if cached is not None:
+                    print("使用特徵工程快取...")
+                    X_train_init = cached['X_train_init']
+                    y_train_init = cached['y_train_init']
+                    X_train_aug = cached['X_train_aug']
+                    y_train_aug = cached['y_train_aug']
                 else:
-                    X_train_aug, y_train_aug = X_train_init, y_train_init
-                # 隨機打散
-                perm = np.random.permutation(len(y_train_aug))
-                X_train_aug = X_train_aug.iloc[perm].reset_index(drop=True)
-                y_train_aug = y_train_aug[perm]
+                    print("計算特徵工程快取...")
+                    # 讀取 fold 的 raw 訓練集並執行初始 jitter 增強
+                    uids_train = [uids_all[i] for i in train_idx]
+                    labs_train = [y_encoded[i] for i in train_idx]
+                    feats_list, labs_list = [], []
+                    for uid, lab in zip(uids_train, labs_train):
+                        # 結合 meta 和原始/jitter 特徵
+                        row_meta = info_df[info_df['unique_id'] == uid].iloc[0].to_dict()
+                        row_meta.pop('cut_point', None)
+                        txt_file = os.path.join('data', 'raw', 'train_data', f'{uid}.txt')
+                        data = np.loadtxt(txt_file)
+                        # 原始特徵
+                        feat = extract_features_from_array(data)
+                        row = row_meta.copy(); row.update(feat)
+                        feats_list.append(row); labs_list.append(lab)
+                        # 初始 jitter 增強
+                        for _ in range(config.AUGMENT_JITTER_COUNT):
+                            jittered = np.stack(
+                                [jitter_signal(arr, config.AUGMENT_JITTER_STD_RATIO) for arr in data.T],
+                                axis=1)
+                            feat_jit = extract_features_from_array(jittered)
+                            row_jit = row_meta.copy(); row_jit.update(feat_jit)
+                            feats_list.append(row_jit); labs_list.append(lab)
+                    X_train_init = pd.DataFrame(feats_list)[config.FEATURES]
+                    y_train_init = np.array(labs_list)
+                    # 平衡資料：必要時額外 jitter 增強
+                    from collections import Counter
+                    cnts = Counter(y_train_init)
+                    max_n = max(cnts.values())
+                    jitter_extras, jitter_labels = [], []
+                    for label, count in cnts.items():
+                        if count < max_n:
+                            need = max_n - count
+                            samples = math.ceil(need / config.AUGMENT_JITTER_COUNT)
+                            uids_of_label = [u for u, lab in zip(uids_train, labs_train) if lab == label]
+                            chosen = random.choices(uids_of_label, k=samples)
+                            for uid_sel in chosen:
+                                row_meta = info_df[info_df['unique_id'] == uid_sel].iloc[0].to_dict()
+                                row_meta.pop('cut_point', None)
+                                txtp = os.path.join('data', 'raw', 'train_data', f'{uid_sel}.txt')
+                                dat = np.loadtxt(txtp)
+                                for _ in range(config.AUGMENT_JITTER_COUNT):
+                                    jit = np.stack(
+                                        [jitter_signal(arr, config.AUGMENT_JITTER_STD_RATIO) for arr in dat.T],
+                                        axis=1)
+                                    feat_jit = extract_features_from_array(jit)
+                                    row_jit = row_meta.copy(); row_jit.update(feat_jit)
+                                    jitter_extras.append(row_jit); jitter_labels.append(label)
+                    # 限制至所需數量
+                    extra_need = max_n - len(y_train_init)
+                    jitter_extras = jitter_extras[:extra_need]
+                    jitter_labels = jitter_labels[:extra_need]
+                    if jitter_extras:
+                        X_train_aug = pd.concat(
+                            [X_train_init, pd.DataFrame(jitter_extras)[config.FEATURES]],
+                            ignore_index=True)
+                        y_train_aug = np.concatenate([y_train_init, np.array(jitter_labels)])
+                    else:
+                        X_train_aug, y_train_aug = X_train_init, y_train_init
+                    # 隨機打散
+                    perm = np.random.permutation(len(y_train_aug))
+                    X_train_aug = X_train_aug.iloc[perm].reset_index(drop=True)
+                    y_train_aug = y_train_aug[perm]
+                    # 寫入特徵工程快取
+                    if config.ENABLE_FEATURE_CACHE:
+                        save_feature_cache(
+                            config.FEATURE_CACHE_DIR,
+                            cache_fname,
+                            {
+                                'X_train_init': X_train_init,
+                                'y_train_init': y_train_init,
+                                'X_train_aug': X_train_aug,
+                                'y_train_aug': y_train_aug
+                            }
+                        )
                 # 準備驗證集：只做原始特徵萃取
                 uids_val = [uids_all[i] for i in val_idx]
                 labs_val = [y_encoded[i] for i in val_idx]
@@ -178,18 +204,30 @@ def main():
                 X_val = X_val_df[selected_features_fold]
                 # TabPFN: NOTE: 可以先用一般版快速推論看效果
                 if use_tabpfn:
-                    model = AutoTabPFNClassifier(max_time=config.PHE_TIME, preset='avoid_overfitting', device='cuda', categorical_feature_indices=[0], random_state=config.RANDOM_SEED)
-                    # model = TabPFNClassifier(categorical_features_indices=[0], random_state=config.RANDOM_SEED)
+                    # 動態指定 'mode' 欄位索引為類別特徵 index
+                    if 'mode' in selected_features_fold:
+                        cat_idx_list = [selected_features_fold.index('mode')]
+                    else:
+                        cat_idx_list = []
+                    # model = AutoTabPFNClassifier(max_time=config.PHE_TIME, preset='avoid_overfitting', device='cuda', categorical_feature_indices=[0], random_state=config.RANDOM_SEED)
+                    model = TabPFNClassifier(categorical_features_indices=cat_idx_list, random_state=config.RANDOM_SEED)
                     model.fit(X_train.values, y_train_aug)
                     y_pred = model.predict_proba(X_val.values)
                 # CatBoost
                 else:
+                    cat_features_loop = [f for f in cat_features if f in selected_features_fold]
+                    # 將分類特徵轉為字串，以供 CatBoost 處理
+                    if cat_features_loop:
+                        X_train = X_train.copy()
+                        X_val = X_val.copy()
+                        for f in cat_features_loop:
+                            X_train[f] = X_train[f].astype(str)
+                            X_val[f] = X_val[f].astype(str)
                     class_weights = compute_class_weights(y_train_aug)
                     class_weights_rounded = [round(w, 4) for w in class_weights]
                     print(f"{target} Fold {fold+1} 類別權重: {class_weights_rounded}")
                     model = copy.deepcopy(TARGETS[target])
                     model.set_params(class_weights=class_weights)
-                    cat_features_loop = [f for f in cat_features if f in selected_features_fold]
                     train_pool = Pool(X_train, y_train_aug, cat_features=cat_features_loop)
                     val_pool = Pool(X_val, y_val, cat_features=cat_features_loop)
                     model.fit(train_pool, eval_set=val_pool)

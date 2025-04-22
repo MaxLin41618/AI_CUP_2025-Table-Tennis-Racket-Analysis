@@ -1,4 +1,5 @@
 # 檔案路徑
+import os  # 用於原始資料目錄定義
 TRAIN_CSV = 'data/training.csv'
 TEST_CSV = 'data/testing.csv'
 
@@ -19,18 +20,24 @@ PLAY_YEARS_COLS = ['play years_0', 'play years_1', 'play years_2']
 LEVEL_COLS = ['level_2', 'level_3', 'level_4', 'level_5']
 
 # 訓練相關參數
-K_FOLD = 5
+K_FOLD = 3
 RANDOM_SEED = 42
 VERBOSE = 0
 
 # 模型設定：'catboost' 或 'tabpfn'
 MODEL_TYPE = 'catboost'
 PHE_TIME = 60 * 10
-FEATURE_SELECTION_N_FEATURES = 20  # 一次性特徵選擇保留特徵數量
+FEATURE_SELECTION_N_FEATURES = 1000  # 一次性特徵選擇保留特徵數量
 
 # 數據增強參數
 AUGMENT_JITTER_STD_RATIO = 0.01  # 噪聲標準差為原始訊號 std 的比例
 AUGMENT_JITTER_COUNT = 1        # 每筆資料要產生的增強樣本數
+
+# 特徵工程快取配置
+FEATURE_CACHE_DIR = 'feature_cache'  # 快取特徵工程結果的資料夾
+ENABLE_FEATURE_CACHE = True            # 是否啟用特徵工程快取
+# 原始訓練資料目錄。
+RAW_TRAIN_DATA_DIR = os.path.join('data', 'raw', 'train_data')
 
 # 使用的特徵（含小波特徵）
 def _gen_wavelet_feats(prefix):
@@ -102,6 +109,19 @@ for _prefix in ['Ax','Ay','Az','Gx','Gy','Gz','AccVec','GyroVec']:
 # 將滑動視窗特徵加入 FEATURES
 for _prefix in ['Ax','Ay','Az','Gx','Gy','Gz','AccVec','GyroVec']:
     FEATURES.extend(_gen_window_feats(_prefix))
+
+# 新增高階特徵：分形維度、Hjorth 參數
+for _prefix in ['Ax','Ay','Az','Gx','Gy','Gz','AccVec','GyroVec']:
+    FEATURES.append(f'{_prefix}_fractal_dimension')
+    FEATURES.append(f'{_prefix}_hjorth_activity')
+    FEATURES.append(f'{_prefix}_hjorth_mobility')
+    FEATURES.append(f'{_prefix}_hjorth_complexity')
+
+# 新增 DCT 特徵
+for _prefix in ['Ax','Ay','Az','Gx','Gy','Gz','AccVec','GyroVec']:
+    FEATURES.append(f'{_prefix}_dct_mean')
+    FEATURES.append(f'{_prefix}_dct_std')
+    FEATURES.append(f'{_prefix}_dct_energy')
 
 # 將跨軸相關特徵加入 FEATURES
 _CROSS_AXES = [('Ax','Ay'), ('Ax','Az'), ('Ay','Az'), ('Gx','Gy'), ('Gx','Gz'), ('Gy','Gz')]
