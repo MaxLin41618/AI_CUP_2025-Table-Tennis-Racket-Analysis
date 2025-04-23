@@ -78,21 +78,17 @@ def print_and_log_overall_mean(cv_scores_dict, target_names, logf):
         logf.write("四任務皆無有效分數\n")
 
 
-def compute_feature_fingerprint(features, jitter_count, jitter_std):
+def compute_feature_fingerprint(features):
     """
     計算當前特徵工程設定的 MD5 fingerprint
 
     Args:
         features (list): 特徵名稱清單
-        jitter_count (int): jitter 次數
-        jitter_std (float): jitter 的標準差比例
     Returns:
         str: fingerprint 字串
     """
     cfg = {
-        "features": features,
-        "jitter_count": jitter_count,
-        "jitter_std": jitter_std
+        "features": features
     }
     try:
         dp_path = os.path.join(os.path.dirname(__file__), 'data_processing.py')

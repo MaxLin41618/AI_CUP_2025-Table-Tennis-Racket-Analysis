@@ -15,10 +15,8 @@ from scipy.fft import rfft, rfftfreq
 import pywt  # 小波轉換
 import config
 import math
-import random
 import json
 from scipy.fftpack import dct  # 新增 DCT
-random.seed(config.RANDOM_SEED)
 np.random.seed(config.RANDOM_SEED)
 
 # ========== 特徵計算工具 ==========
@@ -143,12 +141,6 @@ def calc_window_features(x: np.ndarray, prefix: str, window_size: int = 85, step
     return features
 
 
-def jitter_signal(x: np.ndarray, std_ratio: float) -> np.ndarray:
-    """對單軸訊號加入高斯雜訊"""
-    noise = np.random.normal(0, np.std(x) * std_ratio, size=x.shape)
-    return x + noise
-
-
 def calc_cross_axis_features(data: np.ndarray) -> dict:
     """計算跨軸相關及 AccVec/GyroVec 比率"""
     Ax, Ay, Az, Gx, Gy, Gz = data.T
@@ -256,13 +248,6 @@ def extract_features_from_txt(txt_path: str, augment: bool = True) -> list:
     feature_dicts = []
     # 原始特徵
     feature_dicts.append(extract_features_from_array(data))
-    # 數據增強
-    if augment and config.AUGMENT_JITTER_COUNT > 0:
-        for _ in range(config.AUGMENT_JITTER_COUNT):
-            jittered = np.stack(
-                [jitter_signal(arr, config.AUGMENT_JITTER_STD_RATIO) for arr in data.T], axis=1
-            )
-            feature_dicts.append(extract_features_from_array(jittered))
     return feature_dicts
 
 def process_test_data():

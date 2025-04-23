@@ -19,6 +19,7 @@ MULTI_TARGETS = {'play years', 'level'}
 PLAY_YEARS_COLS = ['play years_0', 'play years_1', 'play years_2']
 LEVEL_COLS = ['level_2', 'level_3', 'level_4', 'level_5']
 
+# ============= TODO =============
 # 訓練相關參數
 K_FOLD = 3
 RANDOM_SEED = 42
@@ -29,13 +30,12 @@ MODEL_TYPE = 'catboost'
 PHE_TIME = 60 * 10
 FEATURE_SELECTION_N_FEATURES = 1000  # 一次性特徵選擇保留特徵數量
 
-# 數據增強參數
-AUGMENT_JITTER_STD_RATIO = 0.01  # 噪聲標準差為原始訊號 std 的比例
-AUGMENT_JITTER_COUNT = 1        # 每筆資料要產生的增強樣本數
 
+# ================================
 # 特徵工程快取配置
 FEATURE_CACHE_DIR = 'feature_cache'  # 快取特徵工程結果的資料夾
 ENABLE_FEATURE_CACHE = True            # 是否啟用特徵工程快取
+
 # 原始訓練資料目錄。
 RAW_TRAIN_DATA_DIR = os.path.join('data', 'raw', 'train_data')
 
