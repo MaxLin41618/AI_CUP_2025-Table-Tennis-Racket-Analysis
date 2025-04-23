@@ -3,6 +3,9 @@
 """
 import matplotlib.pyplot as plt
 import numpy as np
+from collections import Counter
+import os, json, hashlib, pickle
+import config  # 用於讀取 RAW_TRAIN_DATA_DIR
 
 
 def plot_feature_importance(model, feature_names, save_path, title=None, top_n=15):
@@ -38,8 +41,6 @@ def compute_class_weights(y):
     Returns:
         list，每個類別的權重
     """
-    from collections import Counter
-    import numpy as np
     counter = Counter(y)
     n_classes = len(set(y))
     total = len(y)
@@ -75,3 +76,68 @@ def print_and_log_overall_mean(cv_scores_dict, target_names, logf):
     else:
         print("四任務皆無有效分數")
         logf.write("四任務皆無有效分數\n")
+
+
+def compute_feature_fingerprint(features, jitter_count, jitter_std):
+    """
+    計算當前特徵工程設定的 MD5 fingerprint
+
+    Args:
+        features (list): 特徵名稱清單
+        jitter_count (int): jitter 次數
+        jitter_std (float): jitter 的標準差比例
+    Returns:
+        str: fingerprint 字串
+    """
+    cfg = {
+        "features": features,
+        "jitter_count": jitter_count,
+        "jitter_std": jitter_std
+    }
+    try:
+        dp_path = os.path.join(os.path.dirname(__file__), 'data_processing.py')
+        with open(dp_path, 'rb') as f:
+            cfg['data_processing_hash'] = hashlib.md5(f.read()).hexdigest()
+    except Exception:
+        cfg['data_processing_hash'] = ''
+    try:
+        raw_dir = config.RAW_TRAIN_DATA_DIR
+        files = sorted(os.listdir(raw_dir))
+        raw_meta = [(f, os.stat(os.path.join(raw_dir, f)).st_mtime, os.stat(os.path.join(raw_dir, f)).st_size) for f in files]
+        cfg['raw_data_meta'] = hashlib.md5(json.dumps(raw_meta, sort_keys=True).encode()).hexdigest()
+    except Exception:
+        cfg['raw_data_meta'] = ''
+    s = json.dumps(cfg, sort_keys=True)
+    return hashlib.md5(s.encode('utf-8')).hexdigest()
+
+
+def save_feature_cache(cache_dir, fname, data):
+    """
+    將 data 存成 pickle 快取
+
+    Args:
+        cache_dir (str): 快取資料夾
+        fname (str): 檔名
+        data (dict): 要存的資料
+    """
+    os.makedirs(cache_dir, exist_ok=True)
+    path = os.path.join(cache_dir, fname)
+    with open(path, 'wb') as f:
+        pickle.dump(data, f)
+
+
+def load_feature_cache(cache_dir, fname):
+    """
+    從 pickle 快取載入 data，若不存在回傳 None
+
+    Args:
+        cache_dir (str): 快取資料夾
+        fname (str): 檔名
+    Returns:
+        dict or None
+    """
+    path = os.path.join(cache_dir, fname)
+    if not os.path.exists(path):
+        return None
+    with open(path, 'rb') as f:
+        return pickle.load(f)

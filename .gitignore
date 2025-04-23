@@ -27,7 +27,21 @@ venv/
 *.h5
 
 # Data
-data/
+data/DWT
+data/備份-訓練與測試集
 
+
+outputs/
 models/
 catboost_info/
+AICUP.md
+experiment.md
+todo_0422.md
+feature_cache/
+
+feature_engineering_notes.md
+feature_selection_example.md
+TabEBM_example.md
+tabpfn_example.md
+tabpfn_save_and_load_example.md
+work_flow.md
