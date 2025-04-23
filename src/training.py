@@ -18,6 +18,7 @@ import json
 from feature_selection import select_features
 import random
 from data_processing import extract_features_from_array
+from imblearn.over_sampling import BorderlineSMOTE
 
 # 隨機種子
 np.random.seed(config.RANDOM_SEED)
@@ -155,6 +156,12 @@ def main():
                 logf.write(f"Fold {fold+1} selected_features: {selected_features_fold}\n")
                 X_train = X_train_aug[selected_features_fold]
                 X_val = X_val_df[selected_features_fold]
+                print(f"Fold {fold+1} selected_features: {selected_features_fold}")
+                
+                # Borderline-SMOTE 過採樣（僅訓練集）
+                smote = BorderlineSMOTE(random_state=config.RANDOM_SEED)
+                X_train, y_train_aug = smote.fit_resample(X_train, y_train_aug)
+        
                 # TabPFN: TODO: 可以先用一般版快速推論看效果
                 if use_tabpfn:
                     # 動態指定 'mode' 欄位索引為類別特徵 index
