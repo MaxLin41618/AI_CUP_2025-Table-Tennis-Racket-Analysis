@@ -27,7 +27,9 @@ venv/
 *.h5
 
 # Data
-data/
+data/DWT
+data/備份-訓練與測試集
+
 
 outputs/
 models/
