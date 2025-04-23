@@ -209,7 +209,7 @@ def main():
                         cat_idx_list = [selected_features_fold.index('mode')]
                     else:
                         cat_idx_list = []
-                    # model = AutoTabPFNClassifier(max_time=config.PHE_TIME, preset='avoid_overfitting', device='cuda', categorical_feature_indices=[0], random_state=config.RANDOM_SEED)
+                    # model = AutoTabPFNClassifier(max_time=config.PHE_TIME, preset='default', device='cuda', categorical_feature_indices=cat_idx_list, random_state=config.RANDOM_SEED)
                     model = TabPFNClassifier(categorical_features_indices=cat_idx_list, random_state=config.RANDOM_SEED)
                     model.fit(X_train.values, y_train_aug)
                     y_pred = model.predict_proba(X_val.values)
