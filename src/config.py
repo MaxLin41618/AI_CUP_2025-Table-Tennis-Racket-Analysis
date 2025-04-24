@@ -30,6 +30,10 @@ MODEL_TYPE = 'catboost'
 PHE_TIME = 60 * 10
 FEATURE_SELECTION_N_FEATURES = 1000  # 一次性特徵選擇保留特徵數量
 
+# 全局特徵選擇設定
+GLOBAL_FEATURE_SELECTION_METHOD = 'mean_importance'  # 聚合多折重要性方法
+GLOBAL_TOP_K_FEATURES = FEATURE_SELECTION_N_FEATURES  # 全局特徵選擇保留特徵數量
+
 
 # ================================
 # 特徵工程快取配置

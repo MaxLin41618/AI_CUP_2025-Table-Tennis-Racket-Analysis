@@ -81,4 +81,39 @@ def select_features(X: np.ndarray, y: np.ndarray, n_features_to_select: int, fea
             """回傳 bool 型 mask，表示被選中特徵位置。"""
             return self._support
 
-    return _Selector(mask)
+    sel = _Selector(mask)
+    # 保存特徵重要性以供全局選擇使用
+    sel.importances_ = importances
+    return sel
+
+
+def select_global_features(all_importances: list[np.ndarray], feature_names: list[str], method: str, k: int):
+    """
+    全局特徵選擇：聚合多折特徵重要性，選擇前 k 個特徵
+
+    Args:
+        all_importances (list[np.ndarray]): 每折特徵重要性陣列清單
+        feature_names (list[str]): 特徵名稱列表
+        method (str): 聚合方式，目前支援 'mean_importance'
+        k (int): 保留特徵數量
+
+    Returns:
+        selector: sklearn-like selector with get_support()
+    """
+    # 聚合
+    imps = np.stack(all_importances, axis=0)  # shape: (n_folds, n_features)
+    if method == 'mean_importance':
+        agg = imps.mean(axis=0)
+    else:
+        raise ValueError(f"Unknown aggregation method: {method}")
+    # 取 top k
+    idxs = np.argsort(agg)[::-1][:k]
+    mask = np.zeros(len(feature_names), dtype=bool)
+    mask[idxs] = True
+    class _SelectorGlobal:
+        """返回全局選中特徵 mask"""
+        def __init__(self, support: np.ndarray):
+            self._support = support
+        def get_support(self) -> np.ndarray:
+            return self._support
+    return _SelectorGlobal(mask)

@@ -21,6 +21,7 @@ def get_latest_model_dir(base_dir='models'):
     if not subdirs:
         raise FileNotFoundError('找不到任何 models 子資料夾')
     latest = max(subdirs, key=os.path.getmtime)
+    print(f'使用最新模型資料夾: {latest}')
     return latest
 
 
@@ -29,7 +30,7 @@ def load_best_models(model_dir):
     models = {}
     for target in config.BINARY_TARGETS | config.MULTI_TARGETS:
         target_dir = os.path.join(model_dir, target)
-        # 優先載入 TabPFN pickle 檔，其次載入 CatBoost cbm 檔
+        # 優先載入子資料夾下的最佳模型，否則嘗試扁平結構
         tab_path = os.path.join(target_dir, f'best_{target}.tabpfn')
         cbm_path = os.path.join(target_dir, f'best_{target}.cbm')
         if os.path.exists(tab_path):
@@ -40,7 +41,20 @@ def load_best_models(model_dir):
             m.load_model(cbm_path)
             models[target] = m
         else:
-            raise FileNotFoundError(f'找不到 {tab_path} 或 {cbm_path}')
+            # fallback: 扁平結構下的模型
+            flat_tab = os.path.join(model_dir, f'{target}.tabpfn')
+            flat_cbm = os.path.join(model_dir, f'{target}.cbm')
+            if os.path.exists(flat_tab):
+                with open(flat_tab, 'rb') as f:
+                    models[target] = pickle.load(f)
+            elif os.path.exists(flat_cbm):
+                m = CatBoostClassifier()
+                m.load_model(flat_cbm)
+                models[target] = m
+            else:
+                raise FileNotFoundError(
+                    f'找不到 {tab_path} 或 {cbm_path}，亦無 {flat_tab} 或 {flat_cbm}'
+                )
     return models
 
 

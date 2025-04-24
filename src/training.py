@@ -15,7 +15,7 @@ from tabpfn import TabPFNClassifier
 from tabpfn_extensions.post_hoc_ensembles.sklearn_interface import AutoTabPFNClassifier
 import pickle
 import json
-from feature_selection import select_features
+from feature_selection import select_features, select_global_features
 import random
 from data_processing import extract_features_from_array
 from imblearn.over_sampling import BorderlineSMOTE
@@ -55,6 +55,7 @@ def main():
         # per-fold 特徵選擇
         selected_features_folds_by_target = {}
         best_selected_features = {}
+        all_importances_by_target = {}
 
         # CatBoost 類別特徵
         cat_features = ['mode'] # NOTE: CatBoost 類別特徵
@@ -75,6 +76,7 @@ def main():
             sgkf = StratifiedGroupKFold(n_splits=config.K_FOLD, shuffle=True, random_state=config.RANDOM_SEED)
             cv_scores_dict[target] = []
             selected_features_folds_by_target[target] = []
+            all_importances_by_target[target] = []
             
             for fold, (train_idx, val_idx) in enumerate(sgkf.split(info_df, y_encoded, groups=groups)):
                 # 設定 python random 的 seed，確保取樣一致
@@ -87,6 +89,7 @@ def main():
                     logf.write(f"[Fold {fold+1}] 標籤不足(訓練 {len(np.unique(train_labels))}/{n_classes}, 驗證 {len(np.unique(val_labels))}/{n_classes})，跳過此 fold\n")
                     cv_scores_dict[target].append(np.nan)
                     selected_features_folds_by_target[target].append([])
+                    all_importances_by_target[target].append([])
                     continue
                 
                 # 特徵工程快取：計算 fingerprint 並讀取 cache
@@ -153,6 +156,7 @@ def main():
                 mask = selector.get_support()
                 selected_features_fold = [config.FEATURES[i] for i, m in enumerate(mask) if m]
                 selected_features_folds_by_target[target].append(selected_features_fold)
+                all_importances_by_target[target].append(selector.importances_)
                 logf.write(f"Fold {fold+1} selected_features: {selected_features_fold}\n")
                 X_train = X_train_aug[selected_features_fold]
                 X_val = X_val_df[selected_features_fold]
@@ -267,11 +271,27 @@ def main():
         # ======== 四任務平均分數（本地評估用） ========
         print_and_log_overall_mean(cv_scores_dict, list(TARGETS.keys()), logf)
         logf.write('\n')
+        
         # 儲存 per-task 最佳 fold 特徵映射
         os.makedirs('data', exist_ok=True)
         with open(os.path.join('data', 'selected_features.json'), 'w', encoding='utf-8-sig') as jf:
             json.dump(best_selected_features, jf, ensure_ascii=False, indent=2)
         logf.write('儲存 per-task 最佳 fold 特徵至 data/selected_features.json\n')
+
+        # 全局特徵選擇：聚合多折重要性
+        global_selected_features = {}
+        for target in TARGETS:
+            global_selector = select_global_features(
+                all_importances_by_target[target],
+                config.FEATURES,
+                config.GLOBAL_FEATURE_SELECTION_METHOD,
+                config.GLOBAL_TOP_K_FEATURES
+            )
+            mask = global_selector.get_support()
+            global_selected_features[target] = [config.FEATURES[i] for i, m in enumerate(mask) if m]
+        with open(os.path.join('data', 'global_selected_features.json'), 'w', encoding='utf-8-sig') as jf2:
+            json.dump(global_selected_features, jf2, ensure_ascii=False, indent=2)
+        logf.write('儲存全局特徵選擇至 data/global_selected_features.json\n')
 
 if __name__ == '__main__':
     main()
