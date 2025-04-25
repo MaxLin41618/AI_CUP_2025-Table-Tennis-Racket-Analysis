@@ -35,7 +35,8 @@ def select_features(X: np.ndarray, y: np.ndarray, n_features_to_select: int, fea
             'n_estimators': 1000,
             'subsample': 0.8,
             'class_weight': 'balanced',
-            'n_jobs': -1
+            'n_jobs': -1,
+            'verbose': -1
         }
     else:
         objective, metric = 'multiclass', 'multi_logloss'
@@ -49,7 +50,8 @@ def select_features(X: np.ndarray, y: np.ndarray, n_features_to_select: int, fea
             'n_estimators': 1000,
             'subsample': 0.8,
             'class_weight': 'balanced',
-            'n_jobs': -1
+            'n_jobs': -1,
+            'verbose': -1
         }
     model = LGBMClassifier(**params)
     

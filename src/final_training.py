@@ -109,4 +109,8 @@ def main():
 
 
 if __name__ == '__main__':
+    start_time = time.time()
     main()
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"Total training time: {elapsed_time/60:.2f} minutes")

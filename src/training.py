@@ -52,6 +52,28 @@ def main():
         info_df = pd.read_csv(info_path)
         uids_all = info_df['unique_id'].tolist()
         
+        # ===== 全量特徵預計算 =====
+        fp_global = compute_feature_fingerprint(config.FEATURES)
+        cache_all_fname = f"all_features_fp{fp_global}.pkl"
+        cached_all = load_feature_cache(config.FEATURE_CACHE_DIR, cache_all_fname) if config.ENABLE_FEATURE_CACHE else None
+        if cached_all is not None:
+            print("使用全量特徵工程快取...")
+            all_feats_df = cached_all['all_feats_df']
+        else:
+            print("計算全量特徵工程...")
+            feats_all_list = []
+            for uid in uids_all:
+                row_meta = info_df[info_df['unique_id'] == uid].iloc[0].to_dict()
+                row_meta.pop('cut_point', None)
+                txt_file = os.path.join('data', 'raw', 'train_data', f'{uid}.txt')
+                data = np.loadtxt(txt_file)
+                feat = extract_features_from_array(data)
+                row = row_meta.copy(); row.update(feat)
+                feats_all_list.append(row)
+            all_feats_df = pd.DataFrame(feats_all_list).set_index('unique_id')[config.FEATURES]
+            if config.ENABLE_FEATURE_CACHE:
+                save_feature_cache(config.FEATURE_CACHE_DIR, cache_all_fname, {'all_feats_df': all_feats_df})
+        
         # per-fold 特徵選擇
         selected_features_folds_by_target = {}
         best_selected_features = {}
@@ -92,59 +114,19 @@ def main():
                     all_importances_by_target[target].append([])
                     continue
                 
-                # 特徵工程快取：計算 fingerprint 並讀取 cache
-                fp = compute_feature_fingerprint(config.FEATURES)
-                cache_fname = f"{target}_cv{config.K_FOLD}_rs{config.RANDOM_SEED}_fold{fold+1}_{fp}.pkl"
-                cached = load_feature_cache(config.FEATURE_CACHE_DIR, cache_fname) if config.ENABLE_FEATURE_CACHE else None
-                if cached is not None:
-                    print("使用特徵工程快取...")
-                    X_train_init = cached['X_train_init']
-                    y_train_init = cached['y_train_init']
-                    X_train_aug = cached['X_train_aug']
-                    y_train_aug = cached['y_train_aug']
-                else:
-                    print("計算特徵工程快取...")
-                    # 讀取 fold 的 raw 訓練集並執行原始特徵萃取
-                    uids_train = [uids_all[i] for i in train_idx]
-                    labs_train = [y_encoded[i] for i in train_idx]
-                    feats_list, labs_list = [], []
-                    for uid, lab in zip(uids_train, labs_train):
-                        row_meta = info_df[info_df['unique_id'] == uid].iloc[0].to_dict()
-                        row_meta.pop('cut_point', None)
-                        txt_file = os.path.join('data', 'raw', 'train_data', f'{uid}.txt')
-                        data = np.loadtxt(txt_file)
-                        feat = extract_features_from_array(data)
-                        row = row_meta.copy(); row.update(feat)
-                        feats_list.append(row); labs_list.append(lab)
-                    X_train_init = pd.DataFrame(feats_list)[config.FEATURES]
-                    y_train_init = np.array(labs_list)
-                    X_train_aug, y_train_aug = X_train_init, y_train_init
-                    # 寫入特徵工程快取
-                    if config.ENABLE_FEATURE_CACHE:
-                        save_feature_cache(
-                            config.FEATURE_CACHE_DIR,
-                            cache_fname,
-                            {
-                                'X_train_init': X_train_init,
-                                'y_train_init': y_train_init,
-                                'X_train_aug': X_train_aug,
-                                'y_train_aug': y_train_aug
-                            }
-                        )
-                # 準備驗證集：只做原始特徵萃取
+                # 從全量特徵 DataFrame 中選出訓練集
+                uids_train = [uids_all[i] for i in train_idx]
+                labs_train = [y_encoded[i] for i in train_idx]
+                X_train_init = all_feats_df.loc[uids_train]
+                y_train_init = np.array(labs_train)
+                X_train_aug, y_train_aug = X_train_init, y_train_init
+
+                # 從全量特徵 DataFrame 中選出驗證集
                 uids_val = [uids_all[i] for i in val_idx]
                 labs_val = [y_encoded[i] for i in val_idx]
-                feats_val = []
-                for uid, lab in zip(uids_val, labs_val):
-                    row_meta = info_df[info_df['unique_id'] == uid].iloc[0].to_dict()
-                    row_meta.pop('cut_point', None)
-                    txtv = os.path.join('data', 'raw', 'train_data', f'{uid}.txt')
-                    datv = np.loadtxt(txtv)
-                    feat_val = extract_features_from_array(datv)
-                    row = row_meta.copy(); row.update(feat_val)
-                    feats_val.append(row)
-                X_val_df = pd.DataFrame(feats_val)[config.FEATURES]
+                X_val_df = all_feats_df.loc[uids_val]
                 y_val = np.array(labs_val)
+                
                 # per-fold 特徵選擇
                 selector = select_features(
                     X_train_aug.values,
@@ -160,7 +142,8 @@ def main():
                 logf.write(f"Fold {fold+1} selected_features: {selected_features_fold}\n")
                 X_train = X_train_aug[selected_features_fold]
                 X_val = X_val_df[selected_features_fold]
-                print(f"Fold {fold+1} selected_features: {selected_features_fold}")
+                # print(f"Fold {fold+1} selected_features: {selected_features_fold}")
+                print(f"特徵選擇後總共使用{len(selected_features_fold)}個特徵")
                 
                 # Borderline-SMOTE 過採樣（僅訓練集）
                 smote = BorderlineSMOTE(random_state=config.RANDOM_SEED)
@@ -294,4 +277,8 @@ def main():
         logf.write('儲存全局特徵選擇至 data/global_selected_features.json\n')
 
 if __name__ == '__main__':
+    start_time = time.time()
     main()
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"Total training time: {elapsed_time/60:.2f} minutes")
