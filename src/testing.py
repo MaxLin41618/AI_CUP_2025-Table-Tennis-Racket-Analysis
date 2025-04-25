@@ -143,7 +143,7 @@ def main():
     # 載入最佳模型
     models = load_best_models(latest_model_dir)
     # 從 data 資料夾讀取已選特徵映射
-    selected_json_path = os.path.join('data', 'selected_features.json')
+    selected_json_path = os.path.join('data', 'global_selected_features.json')
     with open(selected_json_path, 'r', encoding='utf-8-sig') as jf:
         selected_features_dict = json.load(jf)
     # 預測並輸出

@@ -20,7 +20,7 @@ from imblearn.over_sampling import BorderlineSMOTE
 from catboost import Pool
 from tabpfn import TabPFNClassifier
 from utils import compute_feature_fingerprint, save_feature_cache, load_feature_cache
-
+import time
 
 def main():
     """主流程：載入數據、特徵、增強、訓練最終模型並儲存。"""

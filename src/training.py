@@ -9,7 +9,7 @@ from datetime import datetime
 from sklearn.preprocessing import LabelEncoder
 import numpy as np
 import shutil
-from utils import print_and_log_overall_mean, compute_class_weights, plot_feature_importance, compute_feature_fingerprint, save_feature_cache, load_feature_cache
+from utils import print_and_log_overall_mean, compute_class_weights, plot_feature_importance, export_feature_importance_csv, compute_feature_fingerprint, save_feature_cache, load_feature_cache
 import copy
 from tabpfn import TabPFNClassifier
 from tabpfn_extensions.post_hoc_ensembles.sklearn_interface import AutoTabPFNClassifier
@@ -19,6 +19,7 @@ from feature_selection import select_features, select_global_features
 import random
 from data_processing import extract_features_from_array
 from imblearn.over_sampling import BorderlineSMOTE
+import time
 
 # 隨機種子
 np.random.seed(config.RANDOM_SEED)
@@ -210,7 +211,8 @@ def main():
                         pf.write(str(model.get_params()))
                 if not use_tabpfn:
                     try:
-                        plot_feature_importance(model, selected_features_fold, os.path.join(fold_dir, 'importance.png'), title=f'Feature Importance - {target} FOLD_{fold+1}', top_n=15)
+                        plot_feature_importance(model, selected_features_fold, os.path.join(fold_dir, 'importance.png'), title=f'Feature Importance - {target} FOLD_{fold+1}', top_n=500)
+                        export_feature_importance_csv(model, selected_features_fold, os.path.join(fold_dir, 'importance.csv'), top_n=500)
                     except Exception as e:
                         print(f"[特徵重要度繪圖失敗] {target} fold {fold+1}: {e}")
         # 計算平均分數

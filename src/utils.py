@@ -4,7 +4,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from collections import Counter
-import os, json, hashlib, pickle
+import os, json, hashlib, pickle, csv
 import config  # 用於讀取 RAW_TRAIN_DATA_DIR
 
 
@@ -23,7 +23,7 @@ def plot_feature_importance(model, feature_names, save_path, title=None, top_n=1
     indices = importance.argsort()[::-1][:top_n]
     sorted_names = [feature_names[i] for i in indices]
     sorted_importance = importance[indices]
-    plt.figure(figsize=(8, max(5, top_n//2)))
+    plt.figure(figsize=(100, max(5, top_n//2)))
     plt.barh(range(len(sorted_names)), sorted_importance[::-1], align='center')
     plt.yticks(range(len(sorted_names)), sorted_names[::-1], fontsize=9)
     plt.xlabel('Importance')
@@ -137,3 +137,27 @@ def load_feature_cache(cache_dir, fname):
         return None
     with open(path, 'rb') as f:
         return pickle.load(f)
+
+
+def export_feature_importance_csv(model, feature_names, csv_path, top_n=None):
+    """
+    匯出特徵重要度到 CSV 檔
+
+    Args:
+        model: CatBoostClassifier 已訓練模型
+        feature_names: list 特徵名稱
+        csv_path: str CSV 儲存路徑
+        top_n: int, optional 只輸出前 N 大特徵，若 None 則輸出全部
+    """
+    importance = model.get_feature_importance()
+    if top_n is not None:
+        indices = importance.argsort()[::-1][:top_n]
+    else:
+        indices = importance.argsort()[::-1]
+    sorted_names = [feature_names[i] for i in indices]
+    sorted_importance = importance[indices]
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['feature', 'importance'])
+        for name, imp in zip(sorted_names, sorted_importance):
+            writer.writerow([name, imp])

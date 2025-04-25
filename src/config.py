@@ -23,7 +23,7 @@ LEVEL_COLS = ['level_2', 'level_3', 'level_4', 'level_5']
 # 訓練相關參數
 K_FOLD = 3
 RANDOM_SEED = 42
-VERBOSE = 0
+VERBOSE = 200
 
 # 模型設定：'catboost' 或 'tabpfn'
 MODEL_TYPE = 'catboost'
