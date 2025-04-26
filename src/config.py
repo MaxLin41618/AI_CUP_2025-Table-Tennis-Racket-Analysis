@@ -44,8 +44,29 @@ ENABLE_FEATURE_CACHE = True            # 是否啟用特徵工程快取
 RAW_TRAIN_DATA_DIR = os.path.join('data', 'raw', 'train_data')
 
 # 使用的特徵（含小波特徵）
-def _gen_wavelet_feats(prefix):
-    return [f'{prefix}_wavelet_mean', f'{prefix}_wavelet_std', f'{prefix}_wavelet_energy']
+def _gen_wavelet_feats(prefix, level=3):
+    """生成多級小波分解的統計特徵名稱
+
+    Args:
+        prefix (str): 特徵名稱的前綴 (例如 'Ax')。
+        level (int): 小波分解的級數，預設為 3。
+
+    Returns:
+        list: 包含多級小波特徵名稱的列表。
+    """
+    features = []
+    stats = ['mean', 'std', 'energy']
+
+    # 添加最終近似係數 (cA_level) 的特徵
+    for stat in stats:
+        features.append(f'{prefix}_wavelet_L{level}_cA_{stat}')
+
+    # 添加各級細節係數 (cD_level, ..., cD_1) 的特徵
+    for i in range(level, 0, -1):
+        for stat in stats:
+            features.append(f'{prefix}_wavelet_L{i}_cD_{stat}')
+
+    return features
 
 def _gen_advanced_time_feats(prefix):
     """生成進階時域特徵名稱"""
@@ -74,61 +95,78 @@ def _gen_window_feats(prefix):
         feats.append(f'{prefix}_win_{s}_std')
     return feats
 
-FEATURES = [
-    'mode',
-    # Ax
-    'Ax_mean', 'Ax_std', 'Ax_var', 'Ax_min', 'Ax_max', 'Ax_median', 'Ax_q25', 'Ax_q75', 'Ax_kurtosis', 'Ax_skew', 'Ax_rms', 'Ax_energy', 'Ax_dominant_freq', 'Ax_spectral_centroid', 'Ax_spectral_entropy', 'Ax_spectral_energy',
-    *_gen_wavelet_feats('Ax'),
-    # Ay
-    'Ay_mean', 'Ay_std', 'Ay_var', 'Ay_min', 'Ay_max', 'Ay_median', 'Ay_q25', 'Ay_q75', 'Ay_kurtosis', 'Ay_skew', 'Ay_rms', 'Ay_energy', 'Ay_dominant_freq', 'Ay_spectral_centroid', 'Ay_spectral_entropy', 'Ay_spectral_energy',
-    *_gen_wavelet_feats('Ay'),
-    # Az
-    'Az_mean', 'Az_std', 'Az_var', 'Az_min', 'Az_max', 'Az_median', 'Az_q25', 'Az_q75', 'Az_kurtosis', 'Az_skew', 'Az_rms', 'Az_energy', 'Az_dominant_freq', 'Az_spectral_centroid', 'Az_spectral_entropy', 'Az_spectral_energy',
-    *_gen_wavelet_feats('Az'),
-    # Gx
-    'Gx_mean', 'Gx_std', 'Gx_var', 'Gx_min', 'Gx_max', 'Gx_median', 'Gx_q25', 'Gx_q75', 'Gx_kurtosis', 'Gx_skew', 'Gx_rms', 'Gx_energy', 'Gx_dominant_freq', 'Gx_spectral_centroid', 'Gx_spectral_entropy', 'Gx_spectral_energy',
-    *_gen_wavelet_feats('Gx'),
-    # Gy
-    'Gy_mean', 'Gy_std', 'Gy_var', 'Gy_min', 'Gy_max', 'Gy_median', 'Gy_q25', 'Gy_q75', 'Gy_kurtosis', 'Gy_skew', 'Gy_rms', 'Gy_energy', 'Gy_dominant_freq', 'Gy_spectral_centroid', 'Gy_spectral_entropy', 'Gy_spectral_energy',
-    *_gen_wavelet_feats('Gy'),
-    # Gz
-    'Gz_mean', 'Gz_std', 'Gz_var', 'Gz_min', 'Gz_max', 'Gz_median', 'Gz_q25', 'Gz_q75', 'Gz_kurtosis', 'Gz_skew', 'Gz_rms', 'Gz_energy', 'Gz_dominant_freq', 'Gz_spectral_centroid', 'Gz_spectral_entropy', 'Gz_spectral_energy',
-    *_gen_wavelet_feats('Gz'),
-    # AccVec
-    'AccVec_mean', 'AccVec_std', 'AccVec_var', 'AccVec_min', 'AccVec_max', 'AccVec_median', 'AccVec_q25', 'AccVec_q75', 'AccVec_kurtosis', 'AccVec_skew', 'AccVec_rms', 'AccVec_energy', 'AccVec_dominant_freq', 'AccVec_spectral_centroid', 'AccVec_spectral_entropy', 'AccVec_spectral_energy',
-    *_gen_wavelet_feats('AccVec'),
-    # GyroVec
-    'GyroVec_mean', 'GyroVec_std', 'GyroVec_var', 'GyroVec_min', 'GyroVec_max', 'GyroVec_median', 'GyroVec_q25', 'GyroVec_q75', 'GyroVec_kurtosis', 'GyroVec_skew', 'GyroVec_rms', 'GyroVec_energy', 'GyroVec_dominant_freq', 'GyroVec_spectral_centroid', 'GyroVec_spectral_entropy', 'GyroVec_spectral_energy',
-    *_gen_wavelet_feats('GyroVec'),
-]
+def _gen_autocorr_feats(prefix):
+    """生成 Lag-1 自相關特徵名稱"""
+    return [f'{prefix}_autocorr_lag1']
 
-# 將進階時域特徵加入 FEATURES
-for _prefix in ['Ax','Ay','Az','Gx','Gy','Gz','AccVec','GyroVec']:
-    FEATURES.extend(_gen_advanced_time_feats(_prefix))
+def _gen_jerk_feats(prefix):
+    """生成 Jerk 信號的基礎時域特徵名稱"""
+    # 與 calc_time_features 保持一致
+    # 包含：mean, std, var, min, max, median, q25, q75, kurtosis, skew, rms, energy
+    # 不包含：range, iqr
+    basic_stats = ['mean', 'std', 'var', 'min', 'max', 'median', 'q25', 'q75', 'kurtosis', 'skew', 'rms', 'energy']
+    return [f'{prefix}_{stat}' for stat in basic_stats]
 
-# 將進階頻域特徵加入 FEATURES
-for _prefix in ['Ax','Ay','Az','Gx','Gy','Gz','AccVec','GyroVec']:
-    FEATURES.extend(_gen_advanced_freq_feats(_prefix))
+AXES = ['Ax', 'Ay', 'Az', 'Gx', 'Gy', 'Gz']
+VECTORS = ['AccVec', 'GyroVec']
+JERK_AXES = [f'{ax}_jerk' for ax in AXES]
+JERK_VECTORS = [f'{vec}_jerk' for vec in VECTORS]
 
-# 將滑動視窗特徵加入 FEATURES
-for _prefix in ['Ax','Ay','Az','Gx','Gy','Gz','AccVec','GyroVec']:
-    FEATURES.extend(_gen_window_feats(_prefix))
+FEATURES = ['mode']
+# 1. 基礎時域特徵
+for prefix in AXES + VECTORS:
+    FEATURES.extend([
+        f'{prefix}_mean', f'{prefix}_std', f'{prefix}_var', f'{prefix}_min', f'{prefix}_max', f'{prefix}_median', f'{prefix}_q25', f'{prefix}_q75', f'{prefix}_kurtosis', f'{prefix}_skew', f'{prefix}_rms', f'{prefix}_energy', f'{prefix}_dominant_freq', f'{prefix}_spectral_centroid', f'{prefix}_spectral_entropy', f'{prefix}_spectral_energy',
+    ])
 
-# 新增高階特徵：分形維度、Hjorth 參數
-for _prefix in ['Ax','Ay','Az','Gx','Gy','Gz','AccVec','GyroVec']:
-    FEATURES.append(f'{_prefix}_fractal_dimension')
-    FEATURES.append(f'{_prefix}_hjorth_activity')
-    FEATURES.append(f'{_prefix}_hjorth_mobility')
-    FEATURES.append(f'{_prefix}_hjorth_complexity')
+# 2. 進階時域特徵
+for prefix in AXES + VECTORS:
+    FEATURES.extend(_gen_advanced_time_feats(prefix))
 
-# 新增 DCT 特徵
-for _prefix in ['Ax','Ay','Az','Gx','Gy','Gz','AccVec','GyroVec']:
-    FEATURES.append(f'{_prefix}_dct_mean')
-    FEATURES.append(f'{_prefix}_dct_std')
-    FEATURES.append(f'{_prefix}_dct_energy')
+# 3. 基礎頻域特徵
+for prefix in AXES + VECTORS:
+    FEATURES.extend(_gen_advanced_freq_feats(prefix))
 
-# 將跨軸相關特徵加入 FEATURES
+# 4. 小波特徵 (3級)
+for prefix in AXES + VECTORS:
+    FEATURES.extend(_gen_wavelet_feats(prefix, level=3))
+
+# 5. 滑動視窗摘要特徵
+for prefix in AXES + VECTORS:
+    FEATURES.extend(_gen_window_feats(prefix))
+
+# 6. 碎形維度特徵
+for prefix in AXES + VECTORS:
+    FEATURES.append(f'{prefix}_fractal_dimension')
+    FEATURES.append(f'{prefix}_hjorth_activity')
+    FEATURES.append(f'{prefix}_hjorth_mobility')
+    FEATURES.append(f'{prefix}_hjorth_complexity')
+
+# 7. DCT 特徵
+for prefix in AXES + VECTORS:
+    FEATURES.append(f'{prefix}_dct_mean')
+    FEATURES.append(f'{prefix}_dct_std')
+    FEATURES.append(f'{prefix}_dct_energy')
+
+# 8. 自相關特徵
+for prefix in AXES + VECTORS:
+    FEATURES.extend(_gen_autocorr_feats(prefix))
+
+# 9. Jerk 特徵 (基礎時域)
+for prefix in JERK_AXES + JERK_VECTORS:
+    FEATURES.extend(_gen_jerk_feats(prefix))
+
+# 10. 跨軸相關特徵
 _CROSS_AXES = [('Ax','Ay'), ('Ax','Az'), ('Ay','Az'), ('Gx','Gy'), ('Gx','Gz'), ('Gy','Gz')]
 for x, y in _CROSS_AXES:
     FEATURES.append(f'{x}_{y}_corr')
 FEATURES.append('AccGyro_mean_ratio')
+
+# 11. 跨軸和向量相關性特徵
+_CORRESPONDING_AXES = [('Ax', 'Gx'), ('Ay', 'Gy'), ('Az', 'Gz')]
+for x, y in _CORRESPONDING_AXES:
+    FEATURES.append(f'{x}_{y}_corr')
+FEATURES.append('AccVec_GyroVec_corr')
+
+# 移除重複特徵（以防萬一）
+FEATURES = sorted(list(set(FEATURES)))

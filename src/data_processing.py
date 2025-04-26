@@ -79,23 +79,55 @@ def calc_advanced_freq_features(x: np.ndarray, prefix: str, fs: float = 85.0) ->
     return features
 
 
-def calc_wavelet_features(x: np.ndarray, prefix: str, wavelet: str = 'db4') -> dict:
-    """
-    計算小波轉換特徵
+def calc_wavelet_features(data: np.ndarray, prefix: str, wavelet: str = 'db4', level: int = 3) -> dict:
+    """計算多級小波特徵 (cA 和 cD 係數)
+
     Args:
-        x: 時序資料
-        prefix: 特徵前綴
-        wavelet: 小波基底（預設'db4'）
+        data (np.ndarray): 輸入的一維時間序列數據。
+        prefix (str): 特徵名稱的前綴 (例如 'Ax')。
+        wavelet (str): 使用的小波基函數，預設為 'db4'。
+        level (int): 小波分解的級數，預設為 3。
+
     Returns:
-        dict: 小波特徵
+        dict: 包含小波係數統計特徵的字典。
+            鍵的格式為 f'{prefix}_wavelet_L{level}_{coeff_type}_{stat}'
+            例如: 'Ax_wavelet_L1_cD_mean', 'Ax_wavelet_L3_cA_std'
     """
     features = {}
-    # 進行一階離散小波轉換，分解出 approximation (cA) 與 detail (cD) 係數
-    cA, cD = pywt.dwt(x, wavelet)  # cA: 近似(低頻)係數, cD: 細節(高頻)係數
-    # 只取cA(近似)的統計特徵，避免特徵爆炸
-    features[f'{prefix}_wavelet_mean'] = np.mean(cA)     # 近似係數均值
-    features[f'{prefix}_wavelet_std'] = np.std(cA)       # 近似係數標準差
-    features[f'{prefix}_wavelet_energy'] = np.sum(np.square(cA))  # 近似係數能量
+    coeffs = None
+    try:
+        # 執行多級小波分解
+        # wavedec 返回 [cA_n, cD_n, cD_{n-1}, ..., cD_1]
+        coeffs = pywt.wavedec(data, wavelet, level=level)
+
+        # 提取最終的近似係數 cA_n (n=level)
+        cA = coeffs[0]
+        features[f'{prefix}_wavelet_L{level}_cA_mean'] = np.mean(cA) if len(cA) > 0 else 0
+        features[f'{prefix}_wavelet_L{level}_cA_std'] = np.std(cA) if len(cA) > 1 else 0
+        features[f'{prefix}_wavelet_L{level}_cA_energy'] = np.sum(cA**2) if len(cA) > 0 else 0
+
+        # 提取各級的細節係數 cD_n, cD_{n-1}, ..., cD_1
+        # coeffs 的索引從 1 開始對應 cD_n, cD_{n-1}, ... cD_1
+        for i in range(1, level + 1):
+            cD = coeffs[i]
+            current_level = level - i + 1 # 計算當前係數對應的層級 (cD_3, cD_2, cD_1)
+            features[f'{prefix}_wavelet_L{current_level}_cD_mean'] = np.mean(cD) if len(cD) > 0 else 0
+            features[f'{prefix}_wavelet_L{current_level}_cD_std'] = np.std(cD) if len(cD) > 1 else 0
+            features[f'{prefix}_wavelet_L{current_level}_cD_energy'] = np.sum(cD**2) if len(cD) > 0 else 0
+
+    except ValueError as e:
+        # print(f"警告：計算 {prefix} 的小波特徵時出錯 ({e})。數據長度可能太短。填充 0。")
+        # 如果分解失敗 (例如數據太短)，填充 0
+        # 需要為所有預期的特徵填充 0
+        # 填充 cA 特徵
+        for stat in ['mean', 'std', 'energy']:
+            features[f'{prefix}_wavelet_L{level}_cA_{stat}'] = 0
+        # 填充 cD 特徵
+        for i in range(1, level + 1):
+            current_level = level - i + 1
+            for stat in ['mean', 'std', 'energy']:
+                features[f'{prefix}_wavelet_L{current_level}_cD_{stat}'] = 0
+
     return features
 
 
@@ -148,7 +180,12 @@ def calc_cross_axis_features(data: np.ndarray) -> dict:
     def corr(x, y):
         if np.std(x) == 0 or np.std(y) == 0:
             return 0.0
-        return np.corrcoef(x, y)[0,1]
+        # 確保 x 和 y 有相同的長度，以防萬一
+        min_len = min(len(x), len(y))
+        if min_len == 0:
+            return 0.0
+        return np.corrcoef(x[:min_len], y[:min_len])[0,1]
+
     # 加速度各軸相關
     features['Ax_Ay_corr'] = corr(Ax, Ay)
     features['Ax_Az_corr'] = corr(Ax, Az)
@@ -157,10 +194,18 @@ def calc_cross_axis_features(data: np.ndarray) -> dict:
     features['Gx_Gy_corr'] = corr(Gx, Gy)
     features['Gx_Gz_corr'] = corr(Gx, Gz)
     features['Gy_Gz_corr'] = corr(Gy, Gz)
-    # AccVec/GyroVec mean ratio
+    # 增加：對應軸相關性
+    features['Ax_Gx_corr'] = corr(Ax, Gx)
+    features['Ay_Gy_corr'] = corr(Ay, Gy)
+    features['Az_Gz_corr'] = corr(Az, Gz)
+
+    # AccVec/GyroVec mean ratio and correlation
     acc = np.sqrt(Ax**2 + Ay**2 + Az**2)
     gyro = np.sqrt(Gx**2 + Gy**2 + Gz**2)
     features['AccGyro_mean_ratio'] = np.mean(acc) / (np.mean(gyro) + 1e-8)
+    # 增加：向量大小相關性
+    features['AccVec_GyroVec_corr'] = corr(acc, gyro)
+
     return features
 
 
@@ -203,11 +248,40 @@ def calc_dct_features(x: np.ndarray, prefix: str) -> dict:
     }
 
 
+def calc_autocorr_features(x: np.ndarray, prefix: str) -> dict:
+    """計算 Lag-1 自相關係數"""
+    features = {}
+    if len(x) < 2:
+        features[f'{prefix}_autocorr_lag1'] = 0.0
+        return features
+    # 計算自相關，處理標準差為零的情況
+    x_std = np.std(x)
+    if x_std == 0:
+        features[f'{prefix}_autocorr_lag1'] = 0.0 # 或 1.0，取決於定義，常數序列與自身完全相關但標準差為0
+    else:
+        # np.corrcoef 會自動處理均值中心化
+        autocorr = np.corrcoef(x[:-1], x[1:])[0, 1]
+        # 處理計算結果為 NaN 的情況 (可能由極端值或非常短的序列引起)
+        features[f'{prefix}_autocorr_lag1'] = autocorr if not np.isnan(autocorr) else 0.0
+    return features
+
+
 def extract_features_from_array(data: np.ndarray) -> dict:
     """根據六軸數據陣列萃取特徵"""
-    Ax, Ay, Az, Gx, Gy, Gz = data.T
     features = {}
-    for axis, arr in zip(['Ax','Ay','Az','Gx','Gy','Gz'], [Ax, Ay, Az, Gx, Gy, Gz]):
+    if data.shape[0] < 2: # 需要至少 2 個點來計算 diff
+        # print("警告：數據點少於 2，無法計算 Jerk 特徵。將跳過此 Trial 的所有特徵提取。")
+        # 返回空字典或根據需求填充 NaN/0
+        # 為了與 config 中的 FEATURES 列表匹配，最好填充 0
+        # TODO: 更健壯的處理方式 - 填充所有預期特徵的 0 值
+        return {}
+
+    Ax, Ay, Az, Gx, Gy, Gz = data.T
+
+    # 1. 計算原始信號特徵
+    axes_data = {'Ax': Ax, 'Ay': Ay, 'Az': Az, 'Gx': Gx, 'Gy': Gy, 'Gz': Gz}
+    for axis, arr in axes_data.items():
+        if len(arr) == 0: continue # 跳過空陣列
         features.update(calc_time_features(arr, axis))
         features.update(calc_advanced_time_features(arr, axis))
         features.update(calc_freq_features(arr, axis))
@@ -216,29 +290,65 @@ def extract_features_from_array(data: np.ndarray) -> dict:
         features.update(calc_window_features(arr, axis))
         features.update(calc_fractal_dimension(arr, axis))
         features.update(calc_hjorth_parameters(arr, axis))
-        features.update(calc_dct_features(arr, axis))  # 新增 DCT 特徵
-    acc = np.sqrt(Ax**2 + Ay**2 + Az**2)
-    gyro = np.sqrt(Gx**2 + Gy**2 + Gz**2)
-    features.update(calc_time_features(acc, 'AccVec'))
-    features.update(calc_advanced_time_features(acc, 'AccVec'))
-    features.update(calc_freq_features(acc, 'AccVec'))
-    features.update(calc_advanced_freq_features(acc, 'AccVec'))
-    features.update(calc_wavelet_features(acc, 'AccVec'))
-    features.update(calc_window_features(acc, 'AccVec'))
-    features.update(calc_fractal_dimension(acc, 'AccVec'))
-    features.update(calc_hjorth_parameters(acc, 'AccVec'))
-    features.update(calc_dct_features(acc, 'AccVec'))  # 新增 DCT 特徵
-    features.update(calc_time_features(gyro, 'GyroVec'))
-    features.update(calc_advanced_time_features(gyro, 'GyroVec'))
-    features.update(calc_freq_features(gyro, 'GyroVec'))
-    features.update(calc_advanced_freq_features(gyro, 'GyroVec'))
-    features.update(calc_wavelet_features(gyro, 'GyroVec'))
-    features.update(calc_window_features(gyro, 'GyroVec'))
-    features.update(calc_fractal_dimension(gyro, 'GyroVec'))
-    features.update(calc_hjorth_parameters(gyro, 'GyroVec'))
-    features.update(calc_dct_features(gyro, 'GyroVec'))  # 新增 DCT 特徵
-    # 跨軸相關特徵
+        features.update(calc_dct_features(arr, axis))
+        features.update(calc_autocorr_features(arr, axis))
+
+    # 2. 計算向量大小特徵 (AccVec, GyroVec)
+    AccVec = np.sqrt(Ax**2 + Ay**2 + Az**2)
+    GyroVec = np.sqrt(Gx**2 + Gy**2 + Gz**2)
+    vector_data = {'AccVec': AccVec, 'GyroVec': GyroVec}
+    for vec_name, vec_arr in vector_data.items():
+        if len(vec_arr) == 0: continue
+        features.update(calc_time_features(vec_arr, vec_name))
+        features.update(calc_advanced_time_features(vec_arr, vec_name))
+        features.update(calc_freq_features(vec_arr, vec_name))
+        features.update(calc_advanced_freq_features(vec_arr, vec_name))
+        features.update(calc_wavelet_features(vec_arr, vec_name))
+        features.update(calc_window_features(vec_arr, vec_name))
+        features.update(calc_fractal_dimension(vec_arr, vec_name))
+        features.update(calc_hjorth_parameters(vec_arr, vec_name))
+        features.update(calc_dct_features(vec_arr, vec_name))
+        features.update(calc_autocorr_features(vec_arr, vec_name))
+
+    # 3. 計算 Jerk 信號特徵
+    # 計算單軸 Jerk (加速度和陀螺儀)
+    JerkAx = np.diff(Ax)
+    JerkAy = np.diff(Ay)
+    JerkAz = np.diff(Az)
+    JerkGx = np.diff(Gx)
+    JerkGy = np.diff(Gy)
+    JerkGz = np.diff(Gz)
+
+    jerk_axes_data = {
+        'Ax_jerk': JerkAx, 'Ay_jerk': JerkAy, 'Az_jerk': JerkAz,
+        'Gx_jerk': JerkGx, 'Gy_jerk': JerkGy, 'Gz_jerk': JerkGz
+    }
+
+    for axis, arr in jerk_axes_data.items():
+        if len(arr) == 0: continue
+        # 對 Jerk 信號只提取基礎時域特徵
+        features.update(calc_time_features(arr, axis))
+        # 可以考慮添加其他特徵，例如進階時域特徵
+        # features.update(calc_advanced_time_features(arr, axis))
+
+    # 計算 Jerk 向量大小 (Acc Jerk Mag, Gyro Jerk Mag)
+    if len(JerkAx) > 0: # 確保 diff 產生了結果
+        JerkAccVec = np.sqrt(JerkAx**2 + JerkAy**2 + JerkAz**2)
+        JerkGyroVec = np.sqrt(JerkGx**2 + JerkGy**2 + JerkGz**2)
+
+        jerk_vector_data = {'AccVec_jerk': JerkAccVec, 'GyroVec_jerk': JerkGyroVec}
+        for vec_name, vec_arr in jerk_vector_data.items():
+            if len(vec_arr) == 0: continue
+            # 對 Jerk 向量大小也只提取基礎時域特徵
+            features.update(calc_time_features(vec_arr, vec_name))
+            # features.update(calc_advanced_time_features(vec_arr, vec_name))
+
+    # 4. 計算跨軸特徵
     features.update(calc_cross_axis_features(data))
+
+    # 確保返回的特徵字典包含 config 中定義的所有特徵，即使某些計算失敗也用 0 填充
+    # (這一步驟最好在調用此函數的外部完成，基於 config.FEATURES 列表)
+
     return features
 
 

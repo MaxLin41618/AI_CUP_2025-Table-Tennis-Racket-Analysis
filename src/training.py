@@ -157,8 +157,8 @@ def main():
                         cat_idx_list = [selected_features_fold.index('mode')]
                     else:
                         cat_idx_list = []
-                    # model = AutoTabPFNClassifier(max_time=config.PHE_TIME, preset='default', device='cuda', categorical_feature_indices=cat_idx_list, random_state=config.RANDOM_SEED)
-                    model = TabPFNClassifier(categorical_features_indices=cat_idx_list, random_state=config.RANDOM_SEED)
+                    model = AutoTabPFNClassifier(max_time=config.PHE_TIME, preset='default', device='cuda', categorical_feature_indices=cat_idx_list, random_state=config.RANDOM_SEED)
+                    # model = TabPFNClassifier(categorical_features_indices=cat_idx_list, random_state=config.RANDOM_SEED)
                     model.fit(X_train.values, y_train_aug)
                     y_pred = model.predict_proba(X_val.values)
                 # CatBoost
@@ -211,8 +211,8 @@ def main():
                         pf.write(str(model.get_params()))
                 if not use_tabpfn:
                     try:
-                        plot_feature_importance(model, selected_features_fold, os.path.join(fold_dir, 'importance.png'), title=f'Feature Importance - {target} FOLD_{fold+1}', top_n=500)
-                        export_feature_importance_csv(model, selected_features_fold, os.path.join(fold_dir, 'importance.csv'), top_n=500)
+                        plot_feature_importance(model, selected_features_fold, os.path.join(fold_dir, 'importance.png'), title=f'Feature Importance - {target} FOLD_{fold+1}', top_n=20)
+                        export_feature_importance_csv(model, selected_features_fold, os.path.join(fold_dir, 'importance.csv'), top_n=len(selected_features_fold))
                     except Exception as e:
                         print(f"[特徵重要度繪圖失敗] {target} fold {fold+1}: {e}")
         # 計算平均分數

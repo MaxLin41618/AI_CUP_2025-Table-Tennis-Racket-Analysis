@@ -18,6 +18,7 @@ from model import gender_model, handed_model, play_years_model, level_model
 from sklearn.preprocessing import LabelEncoder
 from imblearn.over_sampling import BorderlineSMOTE
 from catboost import Pool
+from tabpfn_extensions.post_hoc_ensembles.sklearn_interface import AutoTabPFNClassifier
 from tabpfn import TabPFNClassifier
 from utils import compute_feature_fingerprint, save_feature_cache, load_feature_cache
 import time
@@ -88,7 +89,8 @@ def main():
         if use_tabpfn:
             # TabPFNClassifier
             cat_idx = [selected_feats.index('mode')] if 'mode' in selected_feats else []
-            model = copy.deepcopy(TabPFNClassifier(categorical_features_indices=cat_idx, random_state=config.RANDOM_SEED))
+            # model = copy.deepcopy(TabPFNClassifier(categorical_features_indices=cat_idx, random_state=config.RANDOM_SEED))
+            model = copy.deepcopy(AutoTabPFNClassifier(max_time=config.PHE_TIME, preset='default', device='cuda', categorical_feature_indices=cat_idx, random_state=config.RANDOM_SEED))
             model.fit(X_res.values, y_res)
             model_path = os.path.join(save_dir, f'{target}.tabpfn')
             with open(model_path, 'wb') as mf:

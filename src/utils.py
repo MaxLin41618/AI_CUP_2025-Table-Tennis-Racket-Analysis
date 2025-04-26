@@ -23,7 +23,7 @@ def plot_feature_importance(model, feature_names, save_path, title=None, top_n=1
     indices = importance.argsort()[::-1][:top_n]
     sorted_names = [feature_names[i] for i in indices]
     sorted_importance = importance[indices]
-    plt.figure(figsize=(100, max(5, top_n//2)))
+    plt.figure(figsize=(12, max(5, top_n//2)))
     plt.barh(range(len(sorted_names)), sorted_importance[::-1], align='center')
     plt.yticks(range(len(sorted_names)), sorted_names[::-1], fontsize=9)
     plt.xlabel('Importance')
