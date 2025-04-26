@@ -28,7 +28,7 @@ VERBOSE = 200
 # 模型設定：'catboost' 或 'tabpfn'
 MODEL_TYPE = 'catboost'
 PHE_TIME = 60 * 10
-FEATURE_SELECTION_N_FEATURES = 1000  # 一次性特徵選擇保留特徵數量
+FEATURE_SELECTION_N_FEATURES = 3000  # 一次性特徵選擇保留特徵數量， 300是個選擇、如果用tabpfn則選擇100
 
 # 全局特徵選擇設定
 GLOBAL_FEATURE_SELECTION_METHOD = 'mean_importance'  # 聚合多折重要性方法
@@ -162,7 +162,25 @@ for x, y in _CROSS_AXES:
     FEATURES.append(f'{x}_{y}_corr')
 FEATURES.append('AccGyro_mean_ratio')
 
-# 11. 跨軸和向量相關性特徵
+# 11. Gravity/Body Acc 分離特徵
+SEPARATED_AXES = ['bodyAx','bodyAy','bodyAz','gravAx','gravAy','gravAz','bodyAccVec','gravAccVec']
+for prefix in SEPARATED_AXES:
+    FEATURES.extend([
+        f'{prefix}_mean', f'{prefix}_std', f'{prefix}_var', f'{prefix}_min', f'{prefix}_max', f'{prefix}_median', f'{prefix}_q25', f'{prefix}_q75', f'{prefix}_kurtosis', f'{prefix}_skew', f'{prefix}_rms', f'{prefix}_energy',
+        f'{prefix}_dominant_freq', f'{prefix}_spectral_centroid', f'{prefix}_spectral_entropy', f'{prefix}_spectral_energy'
+    ])
+    FEATURES.extend(_gen_advanced_time_feats(prefix))
+    FEATURES.extend(_gen_advanced_freq_feats(prefix))
+    FEATURES.extend(_gen_wavelet_feats(prefix))
+    FEATURES.extend(_gen_window_feats(prefix))
+    FEATURES.append(f'{prefix}_fractal_dimension')
+    FEATURES.append(f'{prefix}_hjorth_activity')
+    FEATURES.append(f'{prefix}_hjorth_mobility')
+    FEATURES.append(f'{prefix}_hjorth_complexity')
+    FEATURES.extend(_gen_autocorr_feats(prefix))
+    FEATURES.extend([f'{prefix}_dct_mean', f'{prefix}_dct_std', f'{prefix}_dct_energy'])
+
+# 12. 跨軸和向量相關性特徵
 _CORRESPONDING_AXES = [('Ax', 'Gx'), ('Ay', 'Gy'), ('Az', 'Gz')]
 for x, y in _CORRESPONDING_AXES:
     FEATURES.append(f'{x}_{y}_corr')
@@ -170,3 +188,5 @@ FEATURES.append('AccVec_GyroVec_corr')
 
 # 移除重複特徵（以防萬一）
 FEATURES = sorted(list(set(FEATURES)))
+
+print(f"Total features: {len(FEATURES)}")

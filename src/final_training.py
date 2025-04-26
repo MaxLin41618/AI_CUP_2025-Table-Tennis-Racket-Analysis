@@ -89,8 +89,8 @@ def main():
         if use_tabpfn:
             # TabPFNClassifier
             cat_idx = [selected_feats.index('mode')] if 'mode' in selected_feats else []
-            # model = copy.deepcopy(TabPFNClassifier(categorical_features_indices=cat_idx, random_state=config.RANDOM_SEED))
-            model = copy.deepcopy(AutoTabPFNClassifier(max_time=config.PHE_TIME, preset='default', device='cuda', categorical_feature_indices=cat_idx, random_state=config.RANDOM_SEED))
+            model = copy.deepcopy(TabPFNClassifier(categorical_features_indices=cat_idx, random_state=config.RANDOM_SEED))
+            # model = copy.deepcopy(AutoTabPFNClassifier(max_time=config.PHE_TIME, preset='avoid_overfitting', device='cuda', categorical_feature_indices=cat_idx, random_state=config.RANDOM_SEED))
             model.fit(X_res.values, y_res)
             model_path = os.path.join(save_dir, f'{target}.tabpfn')
             with open(model_path, 'wb') as mf:

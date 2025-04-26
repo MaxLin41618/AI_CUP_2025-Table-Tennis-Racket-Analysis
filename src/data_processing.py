@@ -17,6 +17,7 @@ import config
 import math
 import json
 from scipy.fftpack import dct  # 新增 DCT
+from scipy.signal import butter, filtfilt  # 新增濾波器
 np.random.seed(config.RANDOM_SEED)
 
 # ========== 特徵計算工具 ==========
@@ -277,6 +278,51 @@ def extract_features_from_array(data: np.ndarray) -> dict:
         return {}
 
     Ax, Ay, Az, Gx, Gy, Gz = data.T
+
+    # 0. 分離重力與身體加速度
+    fs = 85.0
+    order = 4
+    b_lp, a_lp = butter(order, 0.3/(fs/2), btype='low')
+    b_hp, a_hp = butter(order, 0.3/(fs/2), btype='high')
+    gravityAx = filtfilt(b_lp, a_lp, Ax)
+    gravityAy = filtfilt(b_lp, a_lp, Ay)
+    gravityAz = filtfilt(b_lp, a_lp, Az)
+    bodyAx = filtfilt(b_hp, a_hp, Ax)
+    bodyAy = filtfilt(b_hp, a_hp, Ay)
+    bodyAz = filtfilt(b_hp, a_hp, Az)
+    separated_data = {
+        'bodyAx': bodyAx, 'bodyAy': bodyAy, 'bodyAz': bodyAz,
+        'gravAx': gravityAx, 'gravAy': gravityAy, 'gravAz': gravityAz
+    }
+    for axis, arr in separated_data.items():
+        if len(arr) == 0: continue
+        features.update(calc_time_features(arr, axis))
+        features.update(calc_advanced_time_features(arr, axis))
+        features.update(calc_freq_features(arr, axis))
+        features.update(calc_advanced_freq_features(arr, axis))
+        features.update(calc_wavelet_features(arr, axis))
+        features.update(calc_window_features(arr, axis))
+        features.update(calc_fractal_dimension(arr, axis))
+        features.update(calc_hjorth_parameters(arr, axis))
+        features.update(calc_dct_features(arr, axis))
+        features.update(calc_autocorr_features(arr, axis))
+
+    # 0.5 計算分離向量大小特徵
+    bodyAccVec = np.sqrt(bodyAx**2 + bodyAy**2 + bodyAz**2)
+    gravAccVec = np.sqrt(gravityAx**2 + gravityAy**2 + gravityAz**2)
+    vector_sep_data = {'bodyAccVec': bodyAccVec, 'gravAccVec': gravAccVec}
+    for vec_name, vec_arr in vector_sep_data.items():
+        if len(vec_arr) == 0: continue
+        features.update(calc_time_features(vec_arr, vec_name))
+        features.update(calc_advanced_time_features(vec_arr, vec_name))
+        features.update(calc_freq_features(vec_arr, vec_name))
+        features.update(calc_advanced_freq_features(vec_arr, vec_name))
+        features.update(calc_wavelet_features(vec_arr, vec_name))
+        features.update(calc_window_features(vec_arr, vec_name))
+        features.update(calc_fractal_dimension(vec_arr, vec_name))
+        features.update(calc_hjorth_parameters(vec_arr, vec_name))
+        features.update(calc_dct_features(vec_arr, vec_name))
+        features.update(calc_autocorr_features(vec_arr, vec_name))
 
     # 1. 計算原始信號特徵
     axes_data = {'Ax': Ax, 'Ay': Ay, 'Az': Az, 'Gx': Gx, 'Gy': Gy, 'Gz': Gz}

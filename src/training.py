@@ -111,8 +111,9 @@ def main():
                     print(f"[Fold {fold+1}] 標籤不足(訓練 {len(np.unique(train_labels))}/{n_classes}, 驗證 {len(np.unique(val_labels))}/{n_classes})，跳過此 fold")
                     logf.write(f"[Fold {fold+1}] 標籤不足(訓練 {len(np.unique(train_labels))}/{n_classes}, 驗證 {len(np.unique(val_labels))}/{n_classes})，跳過此 fold\n")
                     cv_scores_dict[target].append(np.nan)
+                    # 跳過 fold 時，補全零向量以保持與全量特徵一致的維度
                     selected_features_folds_by_target[target].append([])
-                    all_importances_by_target[target].append([])
+                    all_importances_by_target[target].append(np.zeros(len(config.FEATURES)))
                     continue
                 
                 # 從全量特徵 DataFrame 中選出訓練集
@@ -139,7 +140,12 @@ def main():
                 mask = selector.get_support()
                 selected_features_fold = [config.FEATURES[i] for i, m in enumerate(mask) if m]
                 selected_features_folds_by_target[target].append(selected_features_fold)
-                all_importances_by_target[target].append(selector.importances_)
+                # 將單折重要度映射回全量特徵向量
+                full_imp = np.zeros(len(config.FEATURES))
+                for i, feat in enumerate(selected_features_fold):
+                    idx_full = config.FEATURES.index(feat)
+                    full_imp[idx_full] = selector.importances_[i]
+                all_importances_by_target[target].append(full_imp)
                 logf.write(f"Fold {fold+1} selected_features: {selected_features_fold}\n")
                 X_train = X_train_aug[selected_features_fold]
                 X_val = X_val_df[selected_features_fold]
@@ -157,8 +163,8 @@ def main():
                         cat_idx_list = [selected_features_fold.index('mode')]
                     else:
                         cat_idx_list = []
-                    model = AutoTabPFNClassifier(max_time=config.PHE_TIME, preset='default', device='cuda', categorical_feature_indices=cat_idx_list, random_state=config.RANDOM_SEED)
-                    # model = TabPFNClassifier(categorical_features_indices=cat_idx_list, random_state=config.RANDOM_SEED)
+                    # model = AutoTabPFNClassifier(max_time=config.PHE_TIME, preset='avoid_overfitting', device='cuda', categorical_feature_indices=cat_idx_list, random_state=config.RANDOM_SEED)
+                    model = TabPFNClassifier(categorical_features_indices=cat_idx_list, random_state=config.RANDOM_SEED)
                     model.fit(X_train.values, y_train_aug)
                     y_pred = model.predict_proba(X_val.values)
                 # CatBoost

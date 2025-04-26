@@ -102,8 +102,15 @@ def select_global_features(all_importances: list[np.ndarray], feature_names: lis
     Returns:
         selector: sklearn-like selector with get_support()
     """
-    # 聚合
-    imps = np.stack(all_importances, axis=0)  # shape: (n_folds, n_features)
+    # 聚合前，標準化各折重要度向量長度
+    norm_imps = []
+    for imp in all_importances:
+        arr = np.asarray(imp)
+        # 若不是一維或長度不符則補零
+        if arr.ndim != 1 or arr.shape[0] != len(feature_names):
+            arr = np.zeros(len(feature_names))
+        norm_imps.append(arr)
+    imps = np.stack(norm_imps, axis=0)  # shape: (n_folds, n_features)
     if method == 'mean_importance':
         agg = imps.mean(axis=0)
     else:
