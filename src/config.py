@@ -28,7 +28,7 @@ VERBOSE = 200
 # 模型設定：'catboost' 或 'tabpfn'
 MODEL_TYPE = 'catboost'
 PHE_TIME = 60 * 10
-FEATURE_SELECTION_N_FEATURES = 3000  # 一次性特徵選擇保留特徵數量， 300是個選擇、如果用tabpfn則選擇100
+FEATURE_SELECTION_N_FEATURES = 1000  # 一次性特徵選擇保留特徵數量， 300是個選擇、如果用tabpfn則選擇100
 
 # 全局特徵選擇設定
 GLOBAL_FEATURE_SELECTION_METHOD = 'mean_importance'  # 聚合多折重要性方法
