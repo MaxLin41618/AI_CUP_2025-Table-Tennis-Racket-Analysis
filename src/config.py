@@ -28,7 +28,7 @@ VERBOSE = 200
 # 模型設定：'catboost' 或 'tabpfn'
 MODEL_TYPE = 'catboost'
 PHE_TIME = 60 * 10
-FEATURE_SELECTION_N_FEATURES = 1000  # 一次性特徵選擇保留特徵數量， 300是個選擇、如果用tabpfn則選擇100
+FEATURE_SELECTION_N_FEATURES = 10000  # 一次性特徵選擇保留特徵數量
 
 # 全局特徵選擇設定
 GLOBAL_FEATURE_SELECTION_METHOD = 'mean_importance'  # 聚合多折重要性方法
@@ -185,6 +185,18 @@ _CORRESPONDING_AXES = [('Ax', 'Gx'), ('Ay', 'Gy'), ('Az', 'Gz')]
 for x, y in _CORRESPONDING_AXES:
     FEATURES.append(f'{x}_{y}_corr')
 FEATURES.append('AccVec_GyroVec_corr')
+
+# 13. 新增動態滑窗跨軸相關特徵
+for x, y in [('Ax', 'Ay'), ('Ax', 'Az'), ('Ay', 'Az'), ('Gx', 'Gy'), ('Gx', 'Gz'), ('Gy', 'Gz'), ('Ax', 'Gx'), ('Ay', 'Gy'), ('Az', 'Gz')]:
+    FEATURES.append(f'{x}_{y}_windowed_corr_mean')
+    FEATURES.append(f'{x}_{y}_windowed_corr_std')
+    FEATURES.append(f'{x}_{y}_windowed_corr_min')
+    FEATURES.append(f'{x}_{y}_windowed_corr_max')
+    FEATURES.append(f'{x}_{y}_windowed_corr_median')
+    FEATURES.append(f'{x}_{y}_windowed_corr_q25')
+    FEATURES.append(f'{x}_{y}_windowed_corr_q75')
+    FEATURES.append(f'{x}_{y}_windowed_corr_skew')
+    FEATURES.append(f'{x}_{y}_windowed_corr_kurtosis')
 
 # 移除重複特徵（以防萬一）
 FEATURES = sorted(list(set(FEATURES)))

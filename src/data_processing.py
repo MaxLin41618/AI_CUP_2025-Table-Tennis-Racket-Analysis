@@ -175,27 +175,29 @@ def calc_window_features(x: np.ndarray, prefix: str, window_size: int = 85, step
 
 
 def calc_cross_axis_features(data: np.ndarray) -> dict:
-    """計算跨軸相關及 AccVec/GyroVec 比率"""
-    Ax, Ay, Az, Gx, Gy, Gz = data.T
+    """計算跨軸特徵，包含靜態相關性和動態滑窗相關性"""
     features = {}
+    Ax, Ay, Az = data[:, 0], data[:, 1], data[:, 2]
+    Gx, Gy, Gz = data[:, 3], data[:, 4], data[:, 5]
+
     def corr(x, y):
-        if np.std(x) == 0 or np.std(y) == 0:
-            return 0.0
         # 確保 x 和 y 有相同的長度，以防萬一
         min_len = min(len(x), len(y))
         if min_len == 0:
             return 0.0
         return np.corrcoef(x[:min_len], y[:min_len])[0,1]
 
-    # 加速度各軸相關
+    # 加速度各軸相關 - 靜態
     features['Ax_Ay_corr'] = corr(Ax, Ay)
     features['Ax_Az_corr'] = corr(Ax, Az)
     features['Ay_Az_corr'] = corr(Ay, Az)
-    # 角速度各軸相關
+    
+    # 角速度各軸相關 - 靜態
     features['Gx_Gy_corr'] = corr(Gx, Gy)
     features['Gx_Gz_corr'] = corr(Gx, Gz)
     features['Gy_Gz_corr'] = corr(Gy, Gz)
-    # 增加：對應軸相關性
+    
+    # 跨感測器軸相關 - 靜態
     features['Ax_Gx_corr'] = corr(Ax, Gx)
     features['Ay_Gy_corr'] = corr(Ay, Gy)
     features['Az_Gz_corr'] = corr(Az, Gz)
@@ -204,10 +206,81 @@ def calc_cross_axis_features(data: np.ndarray) -> dict:
     acc = np.sqrt(Ax**2 + Ay**2 + Az**2)
     gyro = np.sqrt(Gx**2 + Gy**2 + Gz**2)
     features['AccGyro_mean_ratio'] = np.mean(acc) / (np.mean(gyro) + 1e-8)
-    # 增加：向量大小相關性
     features['AccVec_GyroVec_corr'] = corr(acc, gyro)
 
+    # 動態滑窗相關性特徵
+    # 1. 加速度各軸
+    acc_pairs = [('Ax_Ay', Ax, Ay), ('Ax_Az', Ax, Az), ('Ay_Az', Ay, Az)]
+    for name, x, y in acc_pairs:
+        wc = calc_windowed_corr(x, y)
+        for stat, val in wc.items():
+            features[f'{name}_windowed_corr_{stat}'] = val
+
+    # 2. 角速度各軸
+    gyro_pairs = [('Gx_Gy', Gx, Gy), ('Gx_Gz', Gx, Gz), ('Gy_Gz', Gy, Gz)]
+    for name, x, y in gyro_pairs:
+        wc = calc_windowed_corr(x, y)
+        for stat, val in wc.items():
+            features[f'{name}_windowed_corr_{stat}'] = val
+
+    # 3. 跨感測器軸
+    cross_pairs = [('Ax_Gx', Ax, Gx), ('Ay_Gy', Ay, Gy), ('Az_Gz', Az, Gz)]
+    for name, x, y in cross_pairs:
+        wc = calc_windowed_corr(x, y)
+        for stat, val in wc.items():
+            features[f'{name}_windowed_corr_{stat}'] = val
+
     return features
+
+
+def calc_windowed_corr(x: np.ndarray, y: np.ndarray,
+                      window_size: int = 85, step: int = 42) -> dict:
+    """計算滑動視窗的相關性統計特徵
+    
+    Args:
+        x: 第一個時間序列
+        y: 第二個時間序列
+        window_size: 視窗大小，預設 85 (約 1 秒)
+        step: 視窗滑動步長，預設 42 (50% 重疊)
+    
+    Returns:
+        dict: 包含 mean, std, min, max, median, 25%, 75%, skewness, kurtosis 等統計量
+    """
+    if step is None:
+        step = window_size // 2
+    
+    N = len(x)
+    corrs = []
+    
+    for i in range(0, N - window_size + 1, step):
+        xi, yi = x[i:i+window_size], y[i:i+window_size]
+        # 避免常數序列
+        if xi.std() < 1e-8 or yi.std() < 1e-8:
+            corrs.append(0.0)
+        else:
+            corrs.append(np.corrcoef(xi, yi)[0,1])
+    
+    if not corrs:
+        return {
+            'mean': 0.0, 'std': 0.0,
+            'min': 0.0, 'max': 0.0,
+            'median': 0.0,
+            'q25': 0.0, 'q75': 0.0,
+            'skew': 0.0, 'kurtosis': 0.0
+        }
+    
+    arr = np.array(corrs)
+    return {
+        'mean': np.mean(arr),
+        'std': np.std(arr),
+        'min': np.min(arr),
+        'max': np.max(arr),
+        'median': np.median(arr),
+        'q25': np.percentile(arr, 25),
+        'q75': np.percentile(arr, 75),
+        'skew': skew(arr),
+        'kurtosis': kurtosis(arr)
+    }
 
 
 def calc_fractal_dimension(x: np.ndarray, prefix: str) -> dict:
