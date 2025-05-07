@@ -508,3 +508,5 @@ def process_test_data():
 
 if __name__ == '__main__':
     process_test_data()
+    df = pd.read_csv('data/testing.csv')
+    print(f'Update features: {len(df.columns)-1}') # -1 是因為 unique_id
