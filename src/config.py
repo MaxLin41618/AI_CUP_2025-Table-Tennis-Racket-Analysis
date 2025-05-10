@@ -22,14 +22,15 @@ LEVEL_COLS = ['level_2', 'level_3', 'level_4', 'level_5']
 
 # ============= TODO =============
 # 訓練相關參數
-K_FOLD = 3
-RANDOM_SEED = 42
-VERBOSE = 200
+K_FOLD = 5
+RANDOM_SEED = 48
+VERBOSE = 500
 
 # 模型設定：'catboost' 或 'tabpfn'
 MODEL_TYPE = 'catboost'
 PHE_TIME = 60 * 10
-FEATURE_SELECTION_N_FEATURES = 10000  # 一次性特徵選擇保留特徵數量
+FEATURE_SELECTION_N_FEATURES = 1000  # 一次性特徵選擇保留特徵數量
+PERM_FEATURE_SELECTION_K = 500      # permutation 特徵選擇保留特徵數量
 
 # 全局特徵選擇設定
 GLOBAL_FEATURE_SELECTION_METHOD = 'mean_importance'  # 聚合多折重要性方法
@@ -44,11 +45,13 @@ ENABLE_FEATURE_CACHE = True            # 是否啟用特徵工程快取
 # 原始訓練資料目錄。
 RAW_TRAIN_DATA_DIR = os.path.join('data', 'raw', 'train_data')
 
-# 如果 testing.csv 已生成，使用其欄位更新 FEATURES 列表
-try:
-    df = pd.read_csv(TEST_CSV, nrows=0)
-    FEATURES = ['mode'] + [c for c in df.columns if c != 'unique_id'] 
-    FEATURES = list(set(FEATURES))
-    print(f"Total features: {len(FEATURES)}")
-except Exception:
-    print("Error: testing.csv not found")
+if __name__ == '__main__':
+    # 如果 testing.csv 已生成，使用其欄位更新 FEATURES 列表
+    try:
+        df = pd.read_csv(TEST_CSV, nrows=0)
+        FEATURES = ['mode'] + [c for c in df.columns if c != 'unique_id']
+        # 保持順序並移除重複
+        FEATURES = list(dict.fromkeys(FEATURES))
+        print(f"Total features: {len(FEATURES)}")
+    except Exception:
+        print("Error: testing.csv not found")

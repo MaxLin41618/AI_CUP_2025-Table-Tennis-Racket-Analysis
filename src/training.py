@@ -20,6 +20,7 @@ import random
 from data_processing import extract_features_from_array
 from imblearn.over_sampling import BorderlineSMOTE
 import time
+from sklearn.inspection import permutation_importance
 
 # 隨機種子
 np.random.seed(config.RANDOM_SEED)
@@ -37,6 +38,16 @@ use_tabpfn = config.MODEL_TYPE.lower() == 'tabpfn'
 # ========== 主訓練流程 ==========
 def main():
     """以StratifiedGroupKFold訓練四個CatBoost模型，並記錄cv結果與平均值"""
+    # 設定訓練資料集    
+    try:
+        df = pd.read_csv(config.TEST_CSV, nrows=0)
+        config.FEATURES = ['mode'] + [c for c in df.columns if c != 'unique_id']
+        # 保持順序並移除重複
+        config.FEATURES = list(dict.fromkeys(config.FEATURES))
+        print(f"更新後的特徵數量: {len(config.FEATURES)}")
+    except Exception as e:
+        print(f"無法更新特徵列表: {e}")
+
     # 建立儲存資料夾
     save_time = datetime.now().strftime('%Y%m%d_%H%M%S')
     save_dir = os.path.join('models', save_time)
@@ -53,33 +64,25 @@ def main():
         info_df = pd.read_csv(info_path)
         uids_all = info_df['unique_id'].tolist()
         
-        # ===== 全量特徵預計算 =====
-        fp_global = compute_feature_fingerprint(config.FEATURES)
-        cache_all_fname = f"all_features_fp{fp_global}.pkl"
-        cached_all = load_feature_cache(config.FEATURE_CACHE_DIR, cache_all_fname) if config.ENABLE_FEATURE_CACHE else None
-        if cached_all is not None:
-            print("使用全量特徵工程快取...")
-            all_feats_df = cached_all['all_feats_df']
-        else:
-            print("計算全量特徵工程...")
-            feats_all_list = []
-            for uid in uids_all:
-                row_meta = info_df[info_df['unique_id'] == uid].iloc[0].to_dict()
-                row_meta.pop('cut_point', None)
-                txt_file = os.path.join('data', 'raw', 'train_data', f'{uid}.txt')
-                data = np.loadtxt(txt_file)
-                feat = extract_features_from_array(data)
-                row = row_meta.copy(); row.update(feat)
-                feats_all_list.append(row)
-            all_feats_df = pd.DataFrame(feats_all_list).set_index('unique_id')[config.FEATURES]
-            if config.ENABLE_FEATURE_CACHE:
-                save_feature_cache(config.FEATURE_CACHE_DIR, cache_all_fname, {'all_feats_df': all_feats_df})
+        # ===== 直接從 training.csv 讀取特徵 =====
+        print("直接從 training.csv 讀取特徵...")
+        # 讀取 training.csv
+        train_df = pd.read_csv(config.TRAIN_CSV)
+        # 設定 'unique_id' 為索引
+        train_df = train_df.set_index('unique_id')
+        # 排除不需要的欄位
+        meta_cols = ['player_id', 'gender', 'hold racket handed', 'play years', 'level']
+        feature_cols = [col for col in train_df.columns if col not in meta_cols]
+        # 選取需要的特徵
+        all_feats_df = train_df[feature_cols]
+        print(f"訓練篩選前使用的特徵數量: {len(all_feats_df.columns)}")
         
         # per-fold 特徵選擇
         selected_features_folds_by_target = {}
         best_selected_features = {}
         all_importances_by_target = {}
-
+        all_perm_importances_by_target = {}
+        
         # CatBoost 類別特徵
         cat_features = ['mode'] # NOTE: CatBoost 類別特徵
 
@@ -100,6 +103,7 @@ def main():
             cv_scores_dict[target] = []
             selected_features_folds_by_target[target] = []
             all_importances_by_target[target] = []
+            all_perm_importances_by_target[target] = []
             
             for fold, (train_idx, val_idx) in enumerate(sgkf.split(info_df, y_encoded, groups=groups)):
                 # 設定 python random 的 seed，確保取樣一致
@@ -114,6 +118,7 @@ def main():
                     # 跳過 fold 時，補全零向量以保持與全量特徵一致的維度
                     selected_features_folds_by_target[target].append([])
                     all_importances_by_target[target].append(np.zeros(len(config.FEATURES)))
+                    all_perm_importances_by_target[target].append(np.zeros(len(config.FEATURES)))
                     continue
                 
                 # 從全量特徵 DataFrame 中選出訓練集
@@ -151,16 +156,51 @@ def main():
                 X_val = X_val_df[selected_features_fold]
                 # print(f"Fold {fold+1} selected_features: {selected_features_fold}")
                 print(f"特徵選擇後總共使用{len(selected_features_fold)}個特徵")
+
+                # permutation importance 篩選
+                X_train = X_train.fillna(X_train.mean())
+                model_perm = copy.deepcopy(TARGETS[target])
+                model_perm.fit(X_train, y_train_aug)
+                perm_res = permutation_importance(model_perm, X_train, y_train_aug, n_repeats=5, random_state=config.RANDOM_SEED)
+                perm_imp = perm_res.importances_mean
+                perm_idxs = np.argsort(perm_imp)[::-1][:config.PERM_FEATURE_SELECTION_K]
+                perm_selected = [selected_features_fold[i] for i in perm_idxs]
+                perm_full_imp = np.zeros(len(config.FEATURES))
+                for idx in perm_idxs:
+                    feat = selected_features_fold[idx]
+                    perm_full_imp[config.FEATURES.index(feat)] = perm_imp[idx]
+                all_perm_importances_by_target[target].append(perm_full_imp)
+                logf.write(f"Fold {fold+1} perm_selected_features: {perm_selected}\n")
+                print(f"Permutation 篩後共使用 {len(perm_selected)} 個特徵")
+                # 更新訓練與驗證集特徵
+                X_train = X_train[perm_selected]
+                X_val = X_val_df[perm_selected]
+                
+                # 處理缺失值 (NaN)，因為 BorderlineSMOTE 不接受 NaN 值
+                # 檢查是否有 NaN 值
+                has_nan = X_train.isna().any().any()
+                if has_nan:
+                    print(f"檢測到 NaN 值，進行填補處理")
+                    # 使用均值填補缺失值
+                    from sklearn.impute import SimpleImputer
+                    imputer = SimpleImputer(strategy='mean')
+                    X_train_imputed = pd.DataFrame(
+                        imputer.fit_transform(X_train),
+                        columns=X_train.columns,
+                        index=X_train.index
+                    )
+                else:
+                    X_train_imputed = X_train
                 
                 # Borderline-SMOTE 過採樣（僅訓練集）
                 smote = BorderlineSMOTE(random_state=config.RANDOM_SEED)
-                X_train, y_train_aug = smote.fit_resample(X_train, y_train_aug)
+                X_train, y_train_aug = smote.fit_resample(X_train_imputed, y_train_aug)
         
                 # TabPFN: TODO: 可以先用一般版快速推論看效果
                 if use_tabpfn:
                     # 動態指定 'mode' 欄位索引為類別特徵 index
-                    if 'mode' in selected_features_fold:
-                        cat_idx_list = [selected_features_fold.index('mode')]
+                    if 'mode' in perm_selected:
+                        cat_idx_list = [perm_selected.index('mode')]
                     else:
                         cat_idx_list = []
                     # model = AutoTabPFNClassifier(max_time=config.PHE_TIME, preset='avoid_overfitting', device='cuda', categorical_feature_indices=cat_idx_list, random_state=config.RANDOM_SEED)
@@ -169,7 +209,7 @@ def main():
                     y_pred = model.predict_proba(X_val.values)
                 # CatBoost
                 else:
-                    cat_features_loop = [f for f in cat_features if f in selected_features_fold]
+                    cat_features_loop = [f for f in cat_features if f in perm_selected]
                     # 將分類特徵轉為字串，以供 CatBoost 處理
                     if cat_features_loop:
                         X_train = X_train.copy()
@@ -283,6 +323,16 @@ def main():
         with open(os.path.join('data', 'global_selected_features.json'), 'w', encoding='utf-8-sig') as jf2:
             json.dump(global_selected_features, jf2, ensure_ascii=False, indent=2)
         logf.write('儲存全局特徵選擇至 data/global_selected_features.json\n')
+
+        # 全局 permutation 特徵選擇：聚合多折 permutation 重要度
+        global_perm = {}
+        for t in TARGETS:
+            agg = np.mean(all_perm_importances_by_target[t], axis=0)
+            idxs = np.argsort(agg)[::-1][:config.PERM_FEATURE_SELECTION_K]
+            global_perm[t] = [config.FEATURES[i] for i in idxs]
+        with open(os.path.join('data', 'global_permutation_selected_features.json'), 'w', encoding='utf-8-sig') as jf3:
+            json.dump(global_perm, jf3, ensure_ascii=False, indent=2)
+        logf.write('儲存全局 permutation 特徵至 data/global_permutation_selected_features.json\n')
 
 if __name__ == '__main__':
     start_time = time.time()

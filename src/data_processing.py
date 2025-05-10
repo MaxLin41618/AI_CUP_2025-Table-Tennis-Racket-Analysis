@@ -18,6 +18,7 @@ import math
 import json
 from scipy.fftpack import dct  # 新增 DCT
 from scipy.signal import butter, filtfilt  # 新增濾波器
+import time
 np.random.seed(config.RANDOM_SEED)
 
 # ========== 特徵計算工具 ==========
@@ -153,8 +154,8 @@ def calc_window_features(x: np.ndarray, prefix: str, window_size: int = 85, step
     windows = [x[i:i+window_size] for i in range(0, N - window_size + 1, step)]
     features = {}
     if not windows:
-        # 無足夠長度時填0
-        for stat in ['mean', 'std', 'min', 'max']:
+        # 無足夠長度時填0，保持與正常分支一致的 keys (mean, var, min, max)
+        for stat in ['mean', 'var', 'min', 'max']:
             features[f'{prefix}_win_{stat}_mean'] = 0.0
             features[f'{prefix}_win_{stat}_std'] = 0.0
         return features
@@ -340,6 +341,154 @@ def calc_autocorr_features(x: np.ndarray, prefix: str) -> dict:
     return features
 
 
+def calc_strike_frequency(x: np.ndarray, prefix: str, fs: float = 85.0, window_size: int = 85) -> dict:
+    """計算擊球頻率，通過檢測單位時間內加速度或角速度信號的峰值次數"""
+    features = {}
+    N = len(x)
+    if N < 2:
+        features[f'{prefix}_strike_freq'] = 0.0
+        return features
+    
+    # 計算滑動窗口內的峰值次數
+    peaks_count = 0
+    step = window_size // 2
+    for i in range(0, N - window_size + 1, step):
+        window = x[i:i+window_size]
+        if len(window) < 2:
+            continue
+        # 檢測峰值：當前點大於前後點
+        peaks = np.where((window[1:-1] > window[:-2]) & (window[1:-1] > window[2:]))[0]
+        peaks_count += len(peaks)
+    
+    # 計算頻率：峰值次數 / 總時間
+    total_time = N / fs
+    features[f'{prefix}_strike_freq'] = peaks_count / total_time if total_time > 0 else 0.0
+    return features
+
+
+def calc_periodicity_features(x: np.ndarray, prefix: str, fs: float = 85.0, max_lag: int = 170) -> dict:
+    """計算動作週期性特徵，通過自相關分析檢測信號的主要週期和穩定性"""
+    features = {}
+    N = len(x)
+    if N < 2:
+        features[f'{prefix}_main_period'] = 0.0
+        features[f'{prefix}_period_stability'] = 0.0
+        return features
+    
+    # 計算自相關
+    autocorr = np.correlate(x - np.mean(x), x - np.mean(x), mode='full')
+    autocorr = autocorr[N-1:N+max_lag]  # 只考慮正向延遲
+    autocorr = autocorr / (np.var(x) * N + 1e-8)  # 標準化
+    
+    # 找到第一個峰值作為主要週期
+    if len(autocorr) > 1:
+        peaks = np.where((autocorr[1:-1] > autocorr[:-2]) & (autocorr[1:-1] > autocorr[2:]))[0]
+        if len(peaks) > 0:
+            main_period_lag = peaks[0] + 1
+            features[f'{prefix}_main_period'] = main_period_lag / fs  # 轉換為時間單位 (秒)
+        else:
+            features[f'{prefix}_main_period'] = 0.0
+    else:
+        features[f'{prefix}_main_period'] = 0.0
+    
+    # 計算週期穩定性：自相關峰值的變異性
+    if len(autocorr) > 1:
+        features[f'{prefix}_period_stability'] = np.std(autocorr) / (np.mean(autocorr) + 1e-8)
+    else:
+        features[f'{prefix}_period_stability'] = 0.0
+    
+    return features
+
+
+def calc_angular_acceleration_features(x: np.ndarray, prefix: str, fs: float = 85.0) -> dict:
+    """計算角速度信號的二階導數(角加速度)統計特徵"""
+    dt = 1.0 / fs
+    first = np.gradient(x, dt)
+    second = np.gradient(first, dt)
+    feats = {}
+    feats[f'{prefix}_ang_acc_mean'] = np.mean(second)
+    feats[f'{prefix}_ang_acc_std'] = np.std(second)
+    feats[f'{prefix}_ang_acc_min'] = np.min(second)
+    feats[f'{prefix}_ang_acc_max'] = np.max(second)
+    feats[f'{prefix}_ang_acc_rms'] = np.sqrt(np.mean(second**2))
+    feats[f'{prefix}_ang_acc_skew'] = skew(second)
+    feats[f'{prefix}_ang_acc_kurtosis'] = kurtosis(second)
+    return feats
+
+
+def calc_stability_features(x: np.ndarray, prefix: str, window_size: int = 85, step: int = None) -> dict:
+    """計算信號變異係數(CV)滑動視窗特徵，並做摘要"""
+    if step is None:
+        step = window_size // 2
+    N = len(x)
+    cvs = []
+    for i in range(0, N - window_size + 1, step):
+        w = x[i:i+window_size]
+        mean = np.mean(w)
+        std = np.std(w)
+        cvs.append(std / (abs(mean) + 1e-8) if abs(mean) > 1e-8 else 0.0)
+    if not cvs:
+        return {f'{prefix}_cv_mean': 0.0, f'{prefix}_cv_std': 0.0}
+    return {f'{prefix}_cv_mean': np.mean(cvs), f'{prefix}_cv_std': np.std(cvs)}
+
+
+def generate_second_order_features(features: dict) -> dict:
+    """生成二階特徵，基於從 selected_features.json 中選擇的重要特徵。
+    
+    Args:
+        features (dict): 包含原始特徵的字典。
+    
+    Returns:
+        dict: 包含二階特徵的字典。
+    """
+    import json
+    second_order_features = {}
+    selected_features_path = 'data/selected_features.json'
+    
+    # 讀取重要特徵，使用 utf-8-sig 編碼以處理 BOM
+    with open(selected_features_path, 'r', encoding='utf-8-sig') as f:
+        selected_features = json.load(f)
+    
+    # 收集所有目標變數的重要特徵
+    important_features = []
+    for target in selected_features:
+        important_features.extend(selected_features[target][:]) 
+    
+    # 去重並排序以確保一致性
+    important_features = sorted(list(set(important_features)))
+    
+    # 僅保留與Ax, Ay, Az, Gx, Gy, Gz相關的特徵
+    axes = ['Ax', 'Ay', 'Az', 'Gx', 'Gy', 'Gz']
+    important_features = [f for f in important_features if any(axis in f for axis in axes)]
+    
+    # 生成乘積和比值特徵，確保一致性
+    count = 0
+    for i, f1 in enumerate(important_features):
+        for f2 in important_features[i+1:]:
+            if count >= 1000:  # 限制總數在1000以內
+                break
+                
+            f1_parts = f1.split('_')
+            f2_parts = f2.split('_')
+            f1_axis = next((part for part in f1_parts if part in axes), None)
+            f2_axis = next((part for part in f2_parts if part in axes), None)
+            
+            if f1_axis and f2_axis:
+                # 生成乘積特徵
+                prod_name = f"{f1}_x_{f2}"
+                second_order_features[prod_name] = features.get(f1, 0) * features.get(f2, 0)
+                count += 1
+                
+                if count < 1000:
+                    # 生成比值特徵
+                    ratio_name = f"{f1}_div_{f2}"
+                    f2_val = features.get(f2, 0)
+                    second_order_features[ratio_name] = features.get(f1, 0) / f2_val if f2_val != 0 else 0
+                    count += 1
+    
+    return second_order_features
+
+
 def extract_features_from_array(data: np.ndarray) -> dict:
     """根據六軸數據陣列萃取特徵"""
     features = {}
@@ -379,6 +528,8 @@ def extract_features_from_array(data: np.ndarray) -> dict:
         features.update(calc_hjorth_parameters(arr, axis))
         features.update(calc_dct_features(arr, axis))
         features.update(calc_autocorr_features(arr, axis))
+        features.update(calc_strike_frequency(arr, axis))
+        features.update(calc_periodicity_features(arr, axis))
 
     # 0.5 計算分離向量大小特徵
     bodyAccVec = np.sqrt(bodyAx**2 + bodyAy**2 + bodyAz**2)
@@ -411,6 +562,14 @@ def extract_features_from_array(data: np.ndarray) -> dict:
         features.update(calc_hjorth_parameters(arr, axis))
         features.update(calc_dct_features(arr, axis))
         features.update(calc_autocorr_features(arr, axis))
+        # 角速度變化率特徵 (angular acceleration)
+        if axis in ['Gx', 'Gy', 'Gz']:
+            features.update(calc_angular_acceleration_features(arr, axis))
+        # 穩定性指標 (coefficient of variation)
+        features.update(calc_stability_features(arr, axis))
+        features.update(calc_strike_frequency(arr, axis))
+        features.update(calc_periodicity_features(arr, axis))
+        features.update(calc_wavelet_features(arr, axis))
 
     # 2. 計算向量大小特徵 (AccVec, GyroVec)
     AccVec = np.sqrt(Ax**2 + Ay**2 + Az**2)
@@ -468,16 +627,161 @@ def extract_features_from_array(data: np.ndarray) -> dict:
     # 確保返回的特徵字典包含 config 中定義的所有特徵，即使某些計算失敗也用 0 填充
     # (這一步驟最好在調用此函數的外部完成，基於 config.FEATURES 列表)
 
+    # 生成二階特徵
+    second_order = generate_second_order_features(features)
+    features.update(second_order)
     return features
 
 
-def extract_features_from_txt(txt_path: str, augment: bool = True) -> list:
+def parse_cut_points(cut_str):
+    """解析 cut_point 欄位字串為 index list"""
+    if isinstance(cut_str, str):
+        s = cut_str.strip('[]')
+        if s.strip() == '':
+            return []
+        parts = s.split()
+        return [int(p) for p in parts]
+    elif isinstance(cut_str, (list, np.ndarray)):
+        return list(cut_str)
+    else:
+        return []
+
+
+def calc_segmentation_features(data: np.ndarray, cut_points, fs: float = 85.0) -> dict:
+    """基於 cut_points 計算峰值功率與頻帶能量分佈比 summary 特徵"""
+    features = {}
+    cp = parse_cut_points(cut_points)
+    if len(cp) < 2:
+        return features
+    acc = data[:, :3]; gyro = data[:, 3:6]
+    acc_mag = np.linalg.norm(acc, axis=1)
+    gyro_mag = np.linalg.norm(gyro, axis=1)
+    peak_list = []
+    ratio_lists = {'0_1': [], '1_3': [], '3_5': []}
+    for i in range(len(cp) - 1):
+        s, e = cp[i], cp[i + 1]
+        seg_acc = acc_mag[s:e]; seg_gyro = gyro_mag[s:e]
+        if seg_acc.size == 0: continue
+        peak_list.append(np.max(seg_acc * seg_gyro))
+        X = rfft(seg_acc); freqs = rfftfreq(len(seg_acc), d=1/fs)
+        mag = np.abs(X)
+        bands = [(0,1), (1,3), (3,5)]
+        band_pows = [np.sum(mag[(freqs>=low)&(freqs<high)]**2) for low,high in bands]
+        total = sum(band_pows) + 1e-8
+        for key, p in zip(ratio_lists, band_pows):
+            ratio_lists[key].append(p / total)
+    if peak_list:
+        features['peak_power_mean'] = np.mean(peak_list)
+        features['peak_power_max'] = np.max(peak_list)
+        features['peak_power_std'] = np.std(peak_list)
+    else:
+        features['peak_power_mean'] = features['peak_power_max'] = features['peak_power_std'] = 0
+    for band, arr in ratio_lists.items():
+        if arr:
+            features[f'energy_ratio_{band}_mean'] = np.mean(arr)
+            features[f'energy_ratio_{band}_std'] = np.std(arr)
+        else:
+            features[f'energy_ratio_{band}_mean'] = features[f'energy_ratio_{band}_std'] = 0
+    return features
+
+
+def segmentation_summary_series(data: np.ndarray, cut_points, feature_func, *args, **kwargs) -> dict:
+    """對每個分段應用 single-series feature_func，並對結果做 summary (mean, std)"""
+    cp = parse_cut_points(cut_points)
+    segs = [data[s:e] for s,e in zip(cp[:-1], cp[1:]) if e> s]
+    feats_list = []
+    for seg in segs:
+        if isinstance(seg, np.ndarray) and seg.size > 0:
+            feats_list.append(feature_func(seg, *args, **kwargs))
+    summary = {}
+    if not feats_list:
+        return summary
+    keys = feats_list[0].keys()
+    for key in keys:
+        vals = [f[key] for f in feats_list]
+        summary[f'{key}_seg_mean'] = np.mean(vals)
+        summary[f'{key}_seg_std'] = np.std(vals)
+    return summary
+
+
+def segmentation_summary_multi(data: np.ndarray, cut_points, feature_func, *args, **kwargs) -> dict:
+    """對每個分段應用 multi-series feature_func，並對結果做 summary (mean, std)"""
+    cp = parse_cut_points(cut_points)
+    segs = [data[s:e] for s,e in zip(cp[:-1], cp[1:]) if e> s]
+    feats_list = []
+    for seg in segs:
+        if isinstance(seg, np.ndarray) and seg.shape[0] > 0:
+            feats_list.append(feature_func(seg, *args, **kwargs))
+    summary = {}
+    if not feats_list:
+        return summary
+    keys = feats_list[0].keys()
+    for key in keys:
+        vals = [f[key] for f in feats_list]
+        summary[f'{key}_seg_mean'] = np.mean(vals)
+        summary[f'{key}_seg_std'] = np.std(vals)
+    return summary
+
+
+def extract_features_from_txt(txt_path: str, cut_points=None, augment: bool = True) -> list:
     """讀取單一檔案並萃取所有特徵（含小波特徵）"""
     data = np.loadtxt(txt_path)
     feature_dicts = []
-    # 原始特徵
-    feature_dicts.append(extract_features_from_array(data))
+    base_feat = extract_features_from_array(data)
+    if cut_points is not None:
+        seg_feat = calc_segmentation_features(data, cut_points)
+        base_feat.update(seg_feat)
+        # 分段摘要特徵
+        axes = ['Ax','Ay','Az','Gx','Gy','Gz']
+        # 窗口特徵分段
+        for idx, ax in enumerate(axes):
+            base_feat.update(segmentation_summary_series(
+                data[:, idx], cut_points, calc_window_features, ax))
+        # 跨軸相關分段
+        base_feat.update(segmentation_summary_multi(
+            data, cut_points, calc_cross_axis_features))
+        # 擊球頻率分段
+        for idx, ax in enumerate(axes):
+            base_feat.update(segmentation_summary_series(
+                data[:, idx], cut_points, calc_strike_frequency, ax))
+        # 週期性特徵分段
+        for idx, ax in enumerate(axes):
+            base_feat.update(segmentation_summary_series(
+                data[:, idx], cut_points, calc_periodicity_features, ax))
+        # 進階頻域特徵分段
+        for idx, ax in enumerate(axes):
+            base_feat.update(segmentation_summary_series(
+                data[:, idx], cut_points, calc_advanced_freq_features, ax))
+    feature_dicts.append(base_feat)
     return feature_dicts
+
+
+def process_train_data():
+    """處理訓練集，生成包含所有特徵的 training.csv"""
+    train_info_path = os.path.join('data', 'raw', 'train_info.csv')
+    train_txt_dir = os.path.join('data', 'raw', 'train_data')
+    train_output_path = os.path.join('data', 'training.csv')
+    if os.path.exists(train_info_path):
+        train_info_df = pd.read_csv(train_info_path)
+        train_features_list = []
+        for idx, row in train_info_df.iterrows():
+            uid = row['unique_id']
+            txt_path = os.path.join(train_txt_dir, f'{uid}.txt')
+            if not os.path.exists(txt_path):
+                print(f"找不到 {txt_path}")
+                continue
+            feats = extract_features_from_txt(txt_path, cut_points=row['cut_point'], augment=False)
+            for feat in feats:
+                meta = row.to_dict()
+                if 'cut_point' in meta:
+                    meta.pop('cut_point')
+                meta.update(feat)
+                train_features_list.append(meta)
+        train_out_df = pd.DataFrame(train_features_list)
+        train_out_df.to_csv(train_output_path, index=False, encoding='utf-8-sig')
+        print(f"已輸出 {train_output_path}")
+        print(f"Update features: {len(train_out_df.columns) - 6}")  # -6 是因為 unique_id, player_id, gender, handed, play_years, level
+
 
 def process_test_data():
     """處理測試集"""
@@ -493,7 +797,7 @@ def process_test_data():
             if not os.path.exists(txt_path):
                 print(f"找不到 {txt_path}")
                 continue
-            feats = extract_features_from_txt(txt_path, augment=False)
+            feats = extract_features_from_txt(txt_path, cut_points=row.get('cut_point', None), augment=False)
             for feat in feats:
                 meta = row.to_dict()
                 if 'cut_point' in meta:
@@ -505,8 +809,13 @@ def process_test_data():
         test_out_df = pd.DataFrame(test_features_list)
         test_out_df.to_csv(test_output_path, index=False, encoding='utf-8-sig')
         print(f"已輸出 {test_output_path}")
+        print(f"Update features: {len(test_out_df.columns) - 1}")  # -1 是因為 unique_id
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
+    start_time = time.time()
+    process_train_data()
     process_test_data()
-    df = pd.read_csv('data/testing.csv')
-    print(f'Update features: {len(df.columns)-1}') # -1 是因為 unique_id
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"Total training time: {elapsed_time/60:.2f} minutes")
