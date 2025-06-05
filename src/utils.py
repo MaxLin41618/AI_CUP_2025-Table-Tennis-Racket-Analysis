@@ -4,7 +4,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from collections import Counter
-import os, json, hashlib, pickle
+import os, json, hashlib, csv
 import config  # 用於讀取 RAW_TRAIN_DATA_DIR
 
 
@@ -23,7 +23,7 @@ def plot_feature_importance(model, feature_names, save_path, title=None, top_n=1
     indices = importance.argsort()[::-1][:top_n]
     sorted_names = [feature_names[i] for i in indices]
     sorted_importance = importance[indices]
-    plt.figure(figsize=(8, max(5, top_n//2)))
+    plt.figure(figsize=(12, max(5, top_n//2)))
     plt.barh(range(len(sorted_names)), sorted_importance[::-1], align='center')
     plt.yticks(range(len(sorted_names)), sorted_names[::-1], fontsize=9)
     plt.xlabel('Importance')
@@ -78,66 +78,25 @@ def print_and_log_overall_mean(cv_scores_dict, target_names, logf):
         logf.write("四任務皆無有效分數\n")
 
 
-def compute_feature_fingerprint(features, jitter_count, jitter_std):
+def export_feature_importance_csv(model, feature_names, csv_path, top_n=None):
     """
-    計算當前特徵工程設定的 MD5 fingerprint
+    匯出特徵重要度到 CSV 檔
 
     Args:
-        features (list): 特徵名稱清單
-        jitter_count (int): jitter 次數
-        jitter_std (float): jitter 的標準差比例
-    Returns:
-        str: fingerprint 字串
+        model: CatBoostClassifier 已訓練模型
+        feature_names: list 特徵名稱
+        csv_path: str CSV 儲存路徑
+        top_n: int, optional 只輸出前 N 大特徵，若 None 則輸出全部
     """
-    cfg = {
-        "features": features,
-        "jitter_count": jitter_count,
-        "jitter_std": jitter_std
-    }
-    try:
-        dp_path = os.path.join(os.path.dirname(__file__), 'data_processing.py')
-        with open(dp_path, 'rb') as f:
-            cfg['data_processing_hash'] = hashlib.md5(f.read()).hexdigest()
-    except Exception:
-        cfg['data_processing_hash'] = ''
-    try:
-        raw_dir = config.RAW_TRAIN_DATA_DIR
-        files = sorted(os.listdir(raw_dir))
-        raw_meta = [(f, os.stat(os.path.join(raw_dir, f)).st_mtime, os.stat(os.path.join(raw_dir, f)).st_size) for f in files]
-        cfg['raw_data_meta'] = hashlib.md5(json.dumps(raw_meta, sort_keys=True).encode()).hexdigest()
-    except Exception:
-        cfg['raw_data_meta'] = ''
-    s = json.dumps(cfg, sort_keys=True)
-    return hashlib.md5(s.encode('utf-8')).hexdigest()
-
-
-def save_feature_cache(cache_dir, fname, data):
-    """
-    將 data 存成 pickle 快取
-
-    Args:
-        cache_dir (str): 快取資料夾
-        fname (str): 檔名
-        data (dict): 要存的資料
-    """
-    os.makedirs(cache_dir, exist_ok=True)
-    path = os.path.join(cache_dir, fname)
-    with open(path, 'wb') as f:
-        pickle.dump(data, f)
-
-
-def load_feature_cache(cache_dir, fname):
-    """
-    從 pickle 快取載入 data，若不存在回傳 None
-
-    Args:
-        cache_dir (str): 快取資料夾
-        fname (str): 檔名
-    Returns:
-        dict or None
-    """
-    path = os.path.join(cache_dir, fname)
-    if not os.path.exists(path):
-        return None
-    with open(path, 'rb') as f:
-        return pickle.load(f)
+    importance = model.get_feature_importance()
+    if top_n is not None:
+        indices = importance.argsort()[::-1][:top_n]
+    else:
+        indices = importance.argsort()[::-1]
+    sorted_names = [feature_names[i] for i in indices]
+    sorted_importance = importance[indices]
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['feature', 'importance'])
+        for name, imp in zip(sorted_names, sorted_importance):
+            writer.writerow([name, imp])

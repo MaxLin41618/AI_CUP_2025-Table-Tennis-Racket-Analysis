@@ -21,6 +21,7 @@ def get_latest_model_dir(base_dir='models'):
     if not subdirs:
         raise FileNotFoundError('找不到任何 models 子資料夾')
     latest = max(subdirs, key=os.path.getmtime)
+    print(f'使用最新模型資料夾: {latest}')
     return latest
 
 
@@ -29,7 +30,7 @@ def load_best_models(model_dir):
     models = {}
     for target in config.BINARY_TARGETS | config.MULTI_TARGETS:
         target_dir = os.path.join(model_dir, target)
-        # 優先載入 TabPFN pickle 檔，其次載入 CatBoost cbm 檔
+        # 優先載入子資料夾下的最佳模型，否則嘗試扁平結構
         tab_path = os.path.join(target_dir, f'best_{target}.tabpfn')
         cbm_path = os.path.join(target_dir, f'best_{target}.cbm')
         if os.path.exists(tab_path):
@@ -40,7 +41,20 @@ def load_best_models(model_dir):
             m.load_model(cbm_path)
             models[target] = m
         else:
-            raise FileNotFoundError(f'找不到 {tab_path} 或 {cbm_path}')
+            # fallback: 扁平結構下的模型
+            flat_tab = os.path.join(model_dir, f'{target}.tabpfn')
+            flat_cbm = os.path.join(model_dir, f'{target}.cbm')
+            if os.path.exists(flat_tab):
+                with open(flat_tab, 'rb') as f:
+                    models[target] = pickle.load(f)
+            elif os.path.exists(flat_cbm):
+                m = CatBoostClassifier()
+                m.load_model(flat_cbm)
+                models[target] = m
+            else:
+                raise FileNotFoundError(
+                    f'找不到 {tab_path} 或 {cbm_path}，亦無 {flat_tab} 或 {flat_cbm}'
+                )
     return models
 
 
@@ -109,29 +123,26 @@ def predict_and_save(models, test_df, selected_features_dict, output_path):
 # ========== 主程式 ===========
 def main():
     """主流程：載入數據、模型、預測、輸出 submission"""
-    # 讀取測試集 meta 並產生測試特徵
-    meta_df = pd.read_csv(config.TEST_CSV)
-    feature_list = []
-    for _, row in meta_df.iterrows():
-        # 將 unique_id 轉為整數以對應檔案名稱
-        uid = int(row['unique_id'])
-        row_meta = row.to_dict()
-        # 更新 unique_id 為整數，避免 CSV 顯示浮點
-        row_meta['unique_id'] = uid
-        txt_path = os.path.join('data', 'raw', 'test_data', f'{uid}.txt')
-        data = np.loadtxt(txt_path)
-        feat = extract_features_from_array(data)
-        row_meta.update(feat)
-        feature_list.append(row_meta)
-    test_df = pd.DataFrame(feature_list)
+    # 直接讀取 testing.csv
+    test_path = os.path.join('data', 'testing.csv')
+    print(f"讀取測試數據: {test_path}")
+    test_df = pd.read_csv(test_path)
+    
+    # 確保 unique_id 是整數格式
+    test_df['unique_id'] = test_df['unique_id'].astype(int)
+    
     # 取得最新模型資料夾
     latest_model_dir = get_latest_model_dir()
     # 載入最佳模型
     models = load_best_models(latest_model_dir)
     # 從 data 資料夾讀取已選特徵映射
-    selected_json_path = os.path.join('data', 'selected_features.json')
+    selected_json_path = os.path.join('data', 'global_permutation_selected_features.json')
     with open(selected_json_path, 'r', encoding='utf-8-sig') as jf:
         selected_features_dict = json.load(jf)
+
+    # 計算測試用特徵數量
+    print(f"測試用特徵數量: {len(selected_features_dict['gender'])}")
+    
     # 預測並輸出
     predict_and_save(models, test_df, selected_features_dict, output_path='outputs/submission.csv')
 
