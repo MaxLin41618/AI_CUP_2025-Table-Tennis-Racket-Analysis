@@ -27,6 +27,7 @@
 
 ### 程式功能
 
+**程式**
 - `data_processing.py`: 處理原始資料，包括特徵工程等。
 - `model.py`: 使用 CatBoost 或 TabPFN 做為主要模型，並針對每個任務分別建模。
 - `feature_selection.py`: 
@@ -41,9 +42,10 @@
 - `utils.py`: 包含一些工具函數，如計算特徵重要度、打印平均分數等。
 - `config.py`: 包含一些配置參數，如訓練參數、模型參數等。
 
-`selected_features.json`: 每個 target 最佳AUC fold 用CatBoost特徵選擇的特徵
-`global_selected_features.json`: 每個 target 聚合全部 fold 用 CatBoost 特徵選擇重要度的前 i 特徵
-`global_permutation_selected_features.json`: 每個 target 聚合全部 fold 用排列重要性的前 j 特徵
+**檔案**
+- `selected_features.json`: 每個 target 最佳AUC fold 用CatBoost特徵選擇的特徵
+- `global_selected_features.json`: 每個 target 聚合全部 fold 用 CatBoost 特徵選擇重要度的前 i 特徵
+- `global_permutation_selected_features.json`: 每個 target 聚合全部 fold 用排列重要性的前 j 特徵
 
 **補充:** 每fold的CatBoost特徵選擇跟Permutation Importance之間有兩階段關係 e.g. 先選1000個特徵，再選500個特徵
 
