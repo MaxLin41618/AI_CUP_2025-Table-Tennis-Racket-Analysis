@@ -20,7 +20,7 @@ from imblearn.over_sampling import BorderlineSMOTE
 from catboost import Pool
 from tabpfn_extensions.post_hoc_ensembles.sklearn_interface import AutoTabPFNClassifier
 from tabpfn import TabPFNClassifier
-from utils import compute_feature_fingerprint, save_feature_cache, load_feature_cache
+from utils import compute_class_weights
 import time
 
 def main():
@@ -116,6 +116,7 @@ def main():
         if use_tabpfn:
             # TabPFNClassifier
             cat_idx = [selected_feats.index('mode')] if 'mode' in selected_feats else []
+            # NOTE: 可註解改用 AutoTabPFNClassifier
             model = copy.deepcopy(TabPFNClassifier(categorical_features_indices=cat_idx, random_state=config.RANDOM_SEED))
             # model = copy.deepcopy(AutoTabPFNClassifier(max_time=config.PHE_TIME, preset='avoid_overfitting', device='cuda', categorical_feature_indices=cat_idx, random_state=config.RANDOM_SEED))
             model.fit(X_res.values, y_res)

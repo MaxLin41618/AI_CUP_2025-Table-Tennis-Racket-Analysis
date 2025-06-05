@@ -13,7 +13,7 @@ from sklearn.model_selection import StratifiedShuffleSplit
 
 
 def select_features(X: np.ndarray, y: np.ndarray, n_features_to_select: int, feature_names: list[str], task: str):
-    """一次性特徵選擇：使用 CatBoostClassifier 計算特徵重要性並選擇 top k 特徵。
+    """使用 CatBoostClassifier 計算特徵重要性並選擇 top k 特徵。
 
     Args:
         X (np.ndarray): 特徵矩陣，維度為 (樣本數, 特徵數)。
@@ -21,7 +21,7 @@ def select_features(X: np.ndarray, y: np.ndarray, n_features_to_select: int, fea
         n_features_to_select (int): 欲保留的特徵數量 k。
         feature_names (list[str]): 特徵名稱列表。
         task (str): 任務類型，決定 objective、metric 與 importance_type。
-
+    
     Returns:
         selector: 具有 `.get_support()` 方法的特徵選擇器，返回 bool 型 mask。
     """

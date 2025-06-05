@@ -9,7 +9,7 @@ from datetime import datetime
 from sklearn.preprocessing import LabelEncoder
 import numpy as np
 import shutil
-from utils import print_and_log_overall_mean, compute_class_weights, plot_feature_importance, export_feature_importance_csv, compute_feature_fingerprint, save_feature_cache, load_feature_cache
+from utils import print_and_log_overall_mean, compute_class_weights, plot_feature_importance, export_feature_importance_csv
 import copy
 from tabpfn import TabPFNClassifier
 from tabpfn_extensions.post_hoc_ensembles.sklearn_interface import AutoTabPFNClassifier
@@ -203,6 +203,7 @@ def main():
                         cat_idx_list = [perm_selected.index('mode')]
                     else:
                         cat_idx_list = []
+                    # NOTE: 可註解改用 AutoTabPFNClassifier
                     # model = AutoTabPFNClassifier(max_time=config.PHE_TIME, preset='avoid_overfitting', device='cuda', categorical_feature_indices=cat_idx_list, random_state=config.RANDOM_SEED)
                     model = TabPFNClassifier(categorical_features_indices=cat_idx_list, random_state=config.RANDOM_SEED)
                     model.fit(X_train.values, y_train_aug)
@@ -304,6 +305,7 @@ def main():
         logf.write('\n')
         
         # 儲存 per-task 最佳 fold 特徵映射
+        # NOTE: 紀錄而已，實際上沒用到
         os.makedirs('data', exist_ok=True)
         with open(os.path.join('data', 'selected_features.json'), 'w', encoding='utf-8-sig') as jf:
             json.dump(best_selected_features, jf, ensure_ascii=False, indent=2)
