@@ -1,6 +1,7 @@
 # AI CUP 2025春季賽－桌球智慧球拍資料的精準分析競賽
 
 [AI CUP 2025春季賽－桌球智慧球拍資料的精準分析競賽](https://tbrain.trendmicro.com.tw/Competitions/Details/39)
+排名: 8/633
 
 ## 競賽目標
 
